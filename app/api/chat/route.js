@@ -1,7 +1,7 @@
 // POST /api/chat — streaming chat endpoint
 import { buildSystemPrompt, detectIntent, detectCheckInAcceptance } from '@/lib/prompts';
 import { streamChatResponse } from '@/lib/llm';
-import { parseRemindTime } from '@/lib/timeParser';
+import { parseRemindTime, parseTimeOffset } from '@/lib/timeParser';
 import {
     getMessages,
     saveMessage,
@@ -10,6 +10,7 @@ import {
     getMemoryItems,
     updateSession,
     getOrCreateSession,
+    rescheduleLastReminder,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -89,6 +90,20 @@ export async function POST(request) {
         // Handle memory delete
         if (mode === 'memory_delete') {
             await deleteLastMemoryItem(userId);
+        }
+
+        // Handle reminder reschedule
+        if (mode === 'reminder_reschedule') {
+            const offsetMs = parseTimeOffset(message);
+            if (offsetMs) {
+                const newRemindAt = new Date(Date.now() + offsetMs).toISOString();
+                const updated = await rescheduleLastReminder(userId, newRemindAt);
+                if (updated) {
+                    userMessage = updated.content;
+                    remindAt = newRemindAt;
+                }
+            }
+            mode = 'reminder_set'; // Reuse reminder_set confirmation response
         }
 
         // Mark briefing as delivered
