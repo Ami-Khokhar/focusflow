@@ -11,6 +11,9 @@ import {
     updateSession,
     getOrCreateSession,
     rescheduleLastReminder,
+    getTodayBriefing,
+    saveTodayBriefing,
+    getRecentMessages,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -111,9 +114,24 @@ export async function POST(request) {
             mode = 'reminder_set'; // Reuse reminder_set confirmation response
         }
 
-        // Mark briefing as delivered
+        // Briefing: serve cached version if it exists (avoids regenerating every page refresh)
         if (mode === 'briefing') {
             await updateSession(sessionId, { briefing_delivered: true });
+            const cached = await getTodayBriefing(userId);
+            if (cached) {
+                // Stream the cached briefing back token-by-token
+                const encoder = new TextEncoder();
+                const stream = new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token: cached.content })}\n\n`));
+                        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                        controller.close();
+                    },
+                });
+                return new Response(stream, {
+                    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' },
+                });
+            }
         }
 
         // Handle check-in trigger — clear the timer so it doesn't re-fire
@@ -128,8 +146,12 @@ export async function POST(request) {
             });
         }
 
-        // Build conversation history (last 20 messages)
-        const history = await getMessages(sessionId, 20);
+        // Build conversation history
+        // For briefing: use cross-session recent messages for richer context
+        // For chat: use current session messages only
+        const history = mode === 'briefing'
+            ? await getRecentMessages(userId, 20)
+            : await getMessages(sessionId, 20);
         const conversationHistory = history.map((msg) => ({
             role: msg.role,
             content: msg.content,
@@ -194,6 +216,10 @@ export async function POST(request) {
                     // Save assistant response to DB (after stream completes)
                     if (fullResponse) {
                         await saveMessage(sessionId, 'assistant', fullResponse);
+                        // Cache the briefing so it's not regenerated on refresh
+                        if (mode === 'briefing') {
+                            await saveTodayBriefing(userId, fullResponse);
+                        }
                     }
                 } catch (error) {
                     console.error('Streaming error:', error);
