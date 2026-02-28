@@ -134,6 +134,7 @@ export default function ChatPage() {
                 userId,
                 userName,
                 mode: 'proactive_save',
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             }),
         }).catch(() => {});
     }
@@ -152,6 +153,7 @@ export default function ChatPage() {
                     userId,
                     userName,
                     mode: 'check_in',
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 }),
             });
 
@@ -220,6 +222,7 @@ export default function ChatPage() {
                     userId: userId,
                     userName: name,
                     mode,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 }),
             });
 
@@ -298,6 +301,7 @@ export default function ChatPage() {
                     userId: userId,
                     userName: userName,
                     mode: 'chat',
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 }),
             });
 

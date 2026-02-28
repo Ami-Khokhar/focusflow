@@ -1,5 +1,5 @@
 // POST /api/chat — streaming chat endpoint
-import { buildSystemPrompt, detectIntent, detectCheckInAcceptance } from '@/lib/prompts';
+import { buildSystemPrompt, detectIntent, detectCheckInAcceptance, classifyIntentWithLLM } from '@/lib/prompts';
 import { streamChatResponse } from '@/lib/llm';
 import { parseRemindTime, parseTimeOffset } from '@/lib/timeParser';
 import {
@@ -17,7 +17,7 @@ export const runtime = 'nodejs';
 
 export async function POST(request) {
     try {
-        const { message, sessionId, userId, userName, mode: requestMode } = await request.json();
+        const { message, sessionId, userId, userName, mode: requestMode, timezone } = await request.json();
 
         if (!sessionId || !userId) {
             return new Response(JSON.stringify({ error: 'Missing sessionId or userId' }), {
@@ -33,7 +33,12 @@ export async function POST(request) {
 
         // For normal chat messages, detect intent
         if (mode === 'chat' && message !== '__MORNING_BRIEFING__' && message !== '__ONBOARDING__') {
-            const intent = detectIntent(message);
+            let intent = detectIntent(message);
+            // LLM fallback only when regex returns 'general' and Groq key is available
+            if (intent === 'general' && process.env.GROQ_API_KEY) {
+                const llmIntent = await classifyIntentWithLLM(message, process.env.GROQ_API_KEY);
+                if (llmIntent) intent = llmIntent;
+            }
             if (intent !== 'general') {
                 mode = intent;
             }
@@ -146,17 +151,19 @@ export async function POST(request) {
 
         // Build system prompt
         const now = new Date();
+        const userTimezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
         const promptMode = (mode === 'memory_capture' || mode === 'memory_recall' || mode === 'memory_delete' || mode === 'decomposition')
             ? 'chat'
             : mode;
         const systemPrompt = buildSystemPrompt({
             userName: userName || 'Friend',
-            currentTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            currentTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone }),
+            timezone: userTimezone,
             mode: promptMode,
             memoryItems: await getMemoryItems(userId),
             activeCheckIn: hasActiveCheckIn,
             checkInDueAt: currentSession.check_in_due_at,
+            remindAt,
         });
 
         // Create a streaming response
