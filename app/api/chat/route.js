@@ -103,6 +103,10 @@ export async function POST(request) {
                 if (remindAt) {
                     mode = 'reminder_set';
                 }
+            } else {
+                // No content after stripping capture keywords (e.g. bare "remind me")
+                // Fall back to chat so LLM asks what to remember
+                mode = 'chat';
             }
         }
 
