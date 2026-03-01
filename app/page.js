@@ -1,14 +1,39 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LandingPage() {
     const router = useRouter();
+    const [loading, setLoading] = useState(false);
 
-    function handleDemo() {
-        localStorage.setItem('focusflow_user_id', '00000000-0000-0000-0000-000000000001');
-        localStorage.setItem('focusflow_user_name', 'Friend');
-        router.push('/chat');
+    async function handleStart() {
+        setLoading(true);
+        try {
+            // Reuse existing user if already stored
+            const existingId = localStorage.getItem('focusflow_user_id');
+            if (existingId && existingId !== '00000000-0000-0000-0000-000000000001') {
+                router.push('/chat');
+                return;
+            }
+
+            // Create a new persistent user
+            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const res = await fetch('/api/user', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ displayName: 'Friend', timezone }),
+            });
+            const user = await res.json();
+            localStorage.setItem('focusflow_user_id', user.id);
+            localStorage.setItem('focusflow_user_name', user.display_name || 'Friend');
+            router.push('/chat');
+        } catch {
+            // Fallback: use demo ID if API fails
+            localStorage.setItem('focusflow_user_id', '00000000-0000-0000-0000-000000000001');
+            localStorage.setItem('focusflow_user_name', 'Friend');
+            router.push('/chat');
+        }
     }
 
     return (
@@ -43,8 +68,8 @@ export default function LandingPage() {
                 </div>
             </div>
 
-            <button className="btn-primary" onClick={handleDemo}>
-                ✨ Try Demo
+            <button className="btn-primary" onClick={handleStart} disabled={loading}>
+                {loading ? 'Starting...' : '✨ Get Started'}
             </button>
 
             <p className="privacy-note">

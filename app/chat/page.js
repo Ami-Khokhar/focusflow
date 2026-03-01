@@ -4,6 +4,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 
+// Supabase client for Realtime (NEXT_PUBLIC_ vars are safe in browser)
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const isSupabaseMode = !!(supabaseUrl && supabaseKey);
+
 export default function ChatPage() {
     const router = useRouter();
     const [messages, setMessages] = useState([]);
@@ -83,45 +88,93 @@ export default function ChatPage() {
     }, [userId, router]);
 
     // ────────────────────────────────────────────
-    //  Proactive message polling (reminders + check-ins)
+    //  Proactive message delivery (reminders + check-ins)
+    //  Supabase mode: Realtime subscription (instant) + fallback poll
+    //  Demo mode: polling only
     // ────────────────────────────────────────────
+
+    // Deduplication — prevents Realtime + polling from showing the same reminder twice
+    const deliveredReminderIds = useRef(new Set());
+
+    // Shared handler — called by both Realtime and polling paths
+    const handleDueReminder = useCallback((reminder) => {
+        if (deliveredReminderIds.current.has(reminder.id)) return;
+        deliveredReminderIds.current.add(reminder.id);
+        const content = `**Reminder:** ${reminder.content}\n\n_(This was something you asked me to hold onto.)_`;
+        setMessages((prev) => [...prev, { role: 'assistant', content }]);
+        saveProactiveMessage(content);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Hoist checkProactiveMessages so it can be shared with the visibility listener
+    const checkProactiveMessages = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/reminders?userId=${userId}`);
+            const data = await res.json();
+            if (data.reminders && data.reminders.length > 0) {
+                for (const reminder of data.reminders) {
+                    handleDueReminder(reminder);
+                }
+            }
+            if (data.checkInDue) {
+                await triggerCheckIn();
+            }
+        } catch {
+            // Silent — will retry on next poll
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId, handleDueReminder]);
+
+    // Supabase Realtime subscription — fires instantly when cron marks a reminder surfaced
+    useEffect(() => {
+        if (!userId || !sessionId || !isSupabaseMode) return;
+
+        let channel;
+        import('@supabase/supabase-js').then(({ createClient }) => {
+            const client = createClient(supabaseUrl, supabaseKey);
+            channel = client
+                .channel(`reminders_${userId}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'memory_items',
+                        filter: `user_id=eq.${userId}`,
+                    },
+                    (payload) => {
+                        if (payload.new.surfaced_at && !payload.old.surfaced_at) {
+                            handleDueReminder(payload.new);
+                        }
+                    }
+                )
+                .subscribe();
+        });
+
+        return () => { channel?.unsubscribe(); };
+    }, [userId, sessionId, handleDueReminder]);
+
+    // Fallback polling — catches missed reminders (demo mode + Realtime hiccups)
     useEffect(() => {
         if (!userId || !sessionId) return;
 
-        const checkProactiveMessages = async () => {
-            // Don't inject proactive messages while the LLM is streaming
-            if (isLoadingRef.current) return;
-
-            try {
-                const res = await fetch(`/api/reminders?userId=${userId}`);
-                const data = await res.json();
-
-                // Inject due reminders
-                if (data.reminders && data.reminders.length > 0) {
-                    for (const reminder of data.reminders) {
-                        const content = `**Reminder:** ${reminder.content}\n\n_(This was something you asked me to hold onto.)_`;
-                        setMessages((prev) => [...prev, { role: 'assistant', content }]);
-                        // Persist the reminder message to conversation history
-                        saveProactiveMessage(content);
-                    }
-                }
-
-                // Trigger check-in if due
-                if (data.checkInDue) {
-                    await triggerCheckIn();
-                }
-            } catch {
-                // Silent failure — will retry on next poll
-            }
-        };
-
-        // Check immediately on mount (catches missed reminders from closed tab)
+        // Check immediately on mount (catches reminders due while tab was closed)
         checkProactiveMessages();
 
-        const interval = setInterval(checkProactiveMessages, 30000); // 30 seconds
+        const interval = setInterval(checkProactiveMessages, isSupabaseMode ? 60000 : 30000);
         return () => clearInterval(interval);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [userId, sessionId]);
+    }, [userId, sessionId, checkProactiveMessages]);
+
+    // Page Visibility — immediately check when user returns to a backgrounded tab
+    // (browsers throttle setInterval in background tabs, so reminders can be missed)
+    useEffect(() => {
+        if (!userId || !sessionId) return;
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') checkProactiveMessages();
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => document.removeEventListener('visibilitychange', onVisible);
+    }, [userId, sessionId, checkProactiveMessages]);
 
     // Fire-and-forget: save a proactive message to conversation history
     function saveProactiveMessage(content) {
