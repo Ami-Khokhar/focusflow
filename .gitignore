@@ -20,3 +20,21 @@ npm-debug.log*
 
 # vercel
 .vercel
+
+# Ruflo Claude Code tooling (can be regenerated via: npx ruflo init)
+.claude/agents/
+.claude/commands/
+.claude/skills/
+.claude/helpers/
+.claude/checkpoints/
+.claude/statusline.mjs
+.claude/statusline.sh
+.claude/statusline-command.sh
+.claude/mcp.json
+.claude/settings.json
+.claude/settings.local.json
+
+# MCP and Claude Code state
+.claude/**/*.db
+.claude/**/*.log
+.claude/cache/

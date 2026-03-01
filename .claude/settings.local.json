@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx next build)"
+      "Bash(npx next build)",
+      "Bash(xargs -I{} sh -c 'echo \"\"=== {} ===\"\" && cat \"\"{}\"\" | grep -E \"\"\\\\\"\"name\\\\\"\"|\\\\\"\"version\\\\\"\"|\\\\\"\"main\\\\\"\"|\\\\\"\"exports\\\\\"\"\"\" | head -8')",
+      "Bash(vercel deploy --prod --yes)"
     ]
   }
 }

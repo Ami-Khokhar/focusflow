@@ -93,13 +93,20 @@ export default function ChatPage() {
     //  Demo mode: polling only
     // ────────────────────────────────────────────
 
-    // Deduplication — prevents Realtime + polling from showing the same reminder twice
+    // Deduplication persisted in sessionStorage — survives page reloads and React re-renders
+    // Clears only when the tab is actually closed (appropriate boundary for a session)
+    // Initialize empty, then hydrate from sessionStorage in useEffect (client-side only)
     const deliveredReminderIds = useRef(new Set());
 
     // Shared handler — called by both Realtime and polling paths
     const handleDueReminder = useCallback((reminder) => {
         if (deliveredReminderIds.current.has(reminder.id)) return;
         deliveredReminderIds.current.add(reminder.id);
+        // Persist so page refreshes don't re-fire the same reminder
+        sessionStorage.setItem(
+            'ff_delivered_reminders',
+            JSON.stringify([...deliveredReminderIds.current])
+        );
         const content = `**Reminder:** ${reminder.content}\n\n_(This was something you asked me to hold onto.)_`;
         setMessages((prev) => [...prev, { role: 'assistant', content }]);
         saveProactiveMessage(content);
@@ -164,6 +171,19 @@ export default function ChatPage() {
         const interval = setInterval(checkProactiveMessages, isSupabaseMode ? 60000 : 30000);
         return () => clearInterval(interval);
     }, [userId, sessionId, checkProactiveMessages]);
+
+    // Hydrate deliveredReminderIds from sessionStorage after mount (client-side only)
+    useEffect(() => {
+        const stored = sessionStorage.getItem('ff_delivered_reminders');
+        if (stored) {
+            try {
+                const ids = JSON.parse(stored);
+                deliveredReminderIds.current = new Set(ids);
+            } catch {
+                // Silent — malformed JSON, just start fresh
+            }
+        }
+    }, []);
 
     // Page Visibility — immediately check when user returns to a backgrounded tab
     // (browsers throttle setInterval in background tabs, so reminders can be missed)
