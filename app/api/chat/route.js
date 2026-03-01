@@ -36,22 +36,33 @@ export async function POST(request) {
 
         // For normal chat messages, detect intent
         if (mode === 'chat' && message !== '__MORNING_BRIEFING__' && message !== '__ONBOARDING__') {
-            let intent = detectIntent(message);
-            // LLM fallback only when regex returns 'general' and Groq key is available
-            if (intent === 'general' && process.env.GROQ_API_KEY) {
-                const llmIntent = await classifyIntentWithLLM(message, process.env.GROQ_API_KEY);
-                if (llmIntent) intent = llmIntent;
+            // Save user message before intent detection (history is used for check-in context)
+            await saveMessage(sessionId, 'user', message);
+
+            // LLM is the primary classifier; regex is the fallback for demo mode / API failure
+            let intent = null;
+            if (process.env.GROQ_API_KEY) {
+                const recentHistory = await getMessages(sessionId, 5);
+                intent = await classifyIntentWithLLM(
+                    message,
+                    process.env.GROQ_API_KEY,
+                    recentHistory
+                );
             }
+            if (!intent) intent = detectIntent(message); // regex fallback
+
             if (intent !== 'general') {
                 mode = intent;
             }
-
-            // Save user message to DB
-            await saveMessage(sessionId, 'user', message);
         }
 
         // Get memory items for context
         const memoryItems = await getMemoryItems(userId);
+        // Hide pending timed reminders from the LLM — they are delivered by the system,
+        // not by the LLM. Showing them causes the LLM to narrate countdowns and statuses.
+        const memoryItemsForLLM = memoryItems.filter(
+            (i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at)
+        );
 
         // Handle memory capture (with time parsing)
         if (mode === 'memory_capture') {
@@ -157,14 +168,15 @@ export async function POST(request) {
             content: msg.content,
         }));
 
-        // Detect check-in acceptance (user said "yes" to a check-in offer)
-        if (mode === 'chat' || mode === 'general') {
-            const isCheckInAcceptance = detectCheckInAcceptance(conversationHistory, message);
-            if (isCheckInAcceptance) {
-                const checkInDueAt = new Date(Date.now() + 25 * 60 * 1000).toISOString();
-                await updateSession(sessionId, { check_in_due_at: checkInDueAt });
-                mode = 'check_in_set';
-            }
+        // Handle check-in acceptance — can come from LLM classifier or legacy regex
+        const isCheckInAcceptance =
+            mode === 'check_in_acceptance' ||
+            ((mode === 'chat' || mode === 'general') &&
+                detectCheckInAcceptance(conversationHistory, message));
+        if (isCheckInAcceptance) {
+            const checkInDueAt = new Date(Date.now() + 25 * 60 * 1000).toISOString();
+            await updateSession(sessionId, { check_in_due_at: checkInDueAt });
+            mode = 'check_in_set';
         }
 
         // Check for active check-in timer (to prevent premature check-ins)
@@ -182,7 +194,7 @@ export async function POST(request) {
             currentTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone }),
             timezone: userTimezone,
             mode: promptMode,
-            memoryItems: await getMemoryItems(userId),
+            memoryItems: memoryItemsForLLM,
             activeCheckIn: hasActiveCheckIn,
             checkInDueAt: currentSession.check_in_due_at,
             remindAt,
@@ -200,7 +212,7 @@ export async function POST(request) {
                         conversationHistory,
                         mode,
                         userName: userName || 'Friend',
-                        memoryItems: await getMemoryItems(userId),
+                        memoryItems: memoryItemsForLLM,
                         userMessage,
                         remindAt,
                         onToken: (token) => {
