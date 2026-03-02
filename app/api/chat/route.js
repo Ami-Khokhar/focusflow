@@ -198,7 +198,7 @@ export async function POST(request) {
             : mode;
         const systemPrompt = buildSystemPrompt({
             userName: userName || 'Friend',
-            currentTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone }),
+            currentTime: now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: userTimezone }) + ', ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone }),
             timezone: userTimezone,
             mode: promptMode,
             memoryItems: memoryItemsForLLM,
