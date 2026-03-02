@@ -41,15 +41,22 @@ export async function POST(request) {
 
             // LLM is the primary classifier; regex is the fallback for demo mode / API failure
             let intent = null;
-            if (process.env.GROQ_API_KEY) {
-                const recentHistory = await getMessages(sessionId, 5);
-                intent = await classifyIntentWithLLM(
-                    message,
-                    process.env.GROQ_API_KEY,
-                    recentHistory
-                );
+
+            // Guard: short acknowledgments must never be misclassified as memory_capture
+            // or reminder_reschedule — they are always general conversation.
+            const isAcknowledgment = /^(ok|okay|sure|thanks|thank you|got it|will do|sounds good|great|perfect|nice|cool|yep|yeah|yes|alright|noted|done|understood|k|kk)[\s.!,?]*$/i.test(message.trim());
+
+            if (!isAcknowledgment) {
+                if (process.env.GROQ_API_KEY) {
+                    const recentHistory = await getMessages(sessionId, 5);
+                    intent = await classifyIntentWithLLM(
+                        message,
+                        process.env.GROQ_API_KEY,
+                        recentHistory
+                    );
+                }
+                if (!intent) intent = detectIntent(message); // regex fallback
             }
-            if (!intent) intent = detectIntent(message); // regex fallback
 
             if (intent !== 'general') {
                 mode = intent;

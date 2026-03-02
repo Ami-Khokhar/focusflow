@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
+import { parseRemindTime } from '@/lib/timeParser';
 
 // Supabase client for Realtime (NEXT_PUBLIC_ vars are safe in browser)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -20,6 +21,7 @@ export default function ChatPage() {
     const textareaRef = useRef(null);
     const initializedRef = useRef(false);
     const isLoadingRef = useRef(false); // ref mirror for polling to read
+    const briefingDoneRef = useRef(false); // prevents reminders from surfacing before briefing
 
     const userId =
         typeof window !== 'undefined'
@@ -70,16 +72,23 @@ export default function ChatPage() {
                 // Load existing messages
                 if (session.messages && session.messages.length > 0) {
                     setMessages(session.messages);
+                    briefingDoneRef.current = true;
                 }
 
-                // If this is a fresh session with no messages, trigger initial greeting
+                // If this is a fresh session with no messages, trigger initial greeting first
                 if (!session.messages || session.messages.length === 0) {
                     await sendSystemMessage(session.id, name, session.briefing_delivered);
                 }
+
+                // Only check for due reminders AFTER the briefing/greeting is shown.
+                // This prevents stale overnight reminders from racing with and hijacking the briefing.
+                briefingDoneRef.current = true;
+                await checkProactiveMessages();
             } catch {
                 // Fallback: still create a session even if API fails
                 setSessionId('demo-session');
                 await sendSystemMessage('demo-session', name, false);
+                briefingDoneRef.current = true;
             }
         }
 
@@ -115,6 +124,9 @@ export default function ChatPage() {
 
     // Hoist checkProactiveMessages so it can be shared with the visibility listener
     const checkProactiveMessages = useCallback(async () => {
+        // Never surface reminders before the briefing has been shown — avoids overnight
+        // reminders hijacking the morning greeting.
+        if (!briefingDoneRef.current) return;
         try {
             const res = await fetch(`/api/reminders?userId=${userId}`);
             const data = await res.json();
@@ -161,14 +173,12 @@ export default function ChatPage() {
         return () => { channel?.unsubscribe(); };
     }, [userId, sessionId, handleDueReminder]);
 
-    // Fallback polling — catches missed reminders (demo mode + Realtime hiccups)
+    // Fallback polling — catches missed reminders (demo mode + Realtime hiccups).
+    // The immediate check on mount is handled inside init() AFTER the briefing completes,
+    // so we only set up the recurring interval here.
     useEffect(() => {
         if (!userId || !sessionId) return;
-
-        // Check immediately on mount (catches reminders due while tab was closed)
-        checkProactiveMessages();
-
-        const interval = setInterval(checkProactiveMessages, isSupabaseMode ? 60000 : 30000);
+        const interval = setInterval(checkProactiveMessages, 15000);
         return () => clearInterval(interval);
     }, [userId, sessionId, checkProactiveMessages]);
 
@@ -352,12 +362,34 @@ export default function ChatPage() {
         }
     }
 
+    // Schedule a precise client-side check when the user sets a short reminder.
+    // This fires checkProactiveMessages() at the exact due time instead of waiting
+    // for the next 15s poll — critical for reminders < 5 minutes.
+    function scheduleLocalReminderCheck(userText) {
+        const stripped = userText
+            .replace(/remind me (to |about )?/i, '')
+            .replace(/remember (this|that)?:?\s*/i, '')
+            .trim();
+        const { remindAt } = parseRemindTime(stripped);
+        if (!remindAt) return;
+        const msUntil = new Date(remindAt) - Date.now();
+        // Only schedule for reminders within the next 30 minutes
+        if (msUntil > 0 && msUntil <= 30 * 60 * 1000) {
+            setTimeout(() => checkProactiveMessages(), msUntil + 2000); // +2s buffer for DB write
+        }
+    }
+
     // ────────────────────────────────────────────
     //  Send user message
     // ────────────────────────────────────────────
     async function handleSend() {
         const text = input.trim();
         if (!text || isLoading) return;
+
+        // If the message looks like a reminder, schedule a precise local check
+        if (/remind me|remember this|note this/i.test(text)) {
+            scheduleLocalReminderCheck(text);
+        }
 
         setInput('');
         const userMsg = { role: 'user', content: text };
