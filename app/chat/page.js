@@ -5,6 +5,14 @@ import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import { parseRemindTime } from '@/lib/timeParser';
 
+// Convert a base64url VAPID public key to a Uint8Array for PushManager.subscribe()
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = atob(base64);
+    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
 // Supabase client for Realtime (NEXT_PUBLIC_ vars are safe in browser)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -205,6 +213,41 @@ export default function ChatPage() {
         document.addEventListener('visibilitychange', onVisible);
         return () => document.removeEventListener('visibilitychange', onVisible);
     }, [userId, sessionId, checkProactiveMessages]);
+
+    // Web Push — register service worker and subscribe after session is ready
+    useEffect(() => {
+        if (!userId || !sessionId || !isSupabaseMode) return;
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        if (!vapidKey) return;
+
+        async function setupPush() {
+            try {
+                const reg = await navigator.serviceWorker.register('/sw.js');
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') return;
+
+                // Reuse existing subscription if already subscribed on this device
+                let sub = await reg.pushManager.getSubscription();
+                if (!sub) {
+                    sub = await reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+                    });
+                }
+                await fetch('/api/push/subscribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, subscription: sub.toJSON() }),
+                });
+            } catch {
+                // Silent — push is opt-in enhancement, not critical
+            }
+        }
+
+        setupPush();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId, sessionId]);
 
     // Fire-and-forget: save a proactive message to conversation history
     function saveProactiveMessage(content) {

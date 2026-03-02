@@ -68,6 +68,23 @@ CREATE POLICY messages_own ON messages
     session_id IN (SELECT id FROM sessions WHERE user_id = auth.uid())
   );
 
+-- ───── PUSH SUBSCRIPTIONS ─────
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+  endpoint    TEXT NOT NULL UNIQUE,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY push_own ON push_subscriptions
+  FOR ALL USING (auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+
 -- ───── INDEXES ─────
 CREATE INDEX IF NOT EXISTS idx_memory_user_status ON memory_items(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_date ON sessions(user_id, started_at);
