@@ -22,6 +22,7 @@ export async function GET(request) {
         process.env.CRON_SECRET &&
         authHeader !== `Bearer ${process.env.CRON_SECRET}`
     ) {
+        console.error('[cron] Auth failed — got:', authHeader, '— expected Bearer <CRON_SECRET>. If this is from cron-job.org, check Vercel Deployment Protection settings.');
         return new Response('Unauthorized', { status: 401 });
     }
 
