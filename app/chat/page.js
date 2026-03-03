@@ -80,11 +80,11 @@ export default function ChatPage() {
                 // Load existing messages
                 if (session.messages && session.messages.length > 0) {
                     setMessages(session.messages);
-                    briefingDoneRef.current = true;
                 }
 
-                // If this is a fresh session with no messages, trigger initial greeting first
-                if (!session.messages || session.messages.length === 0) {
+                // Send briefing if not yet delivered today, OR onboarding if fresh session
+                // This ensures briefing fires even if the session has messages from a late-night chat
+                if (!session.messages || session.messages.length === 0 || !session.briefing_delivered) {
                     await sendSystemMessage(session.id, name, session.briefing_delivered);
                 }
 
