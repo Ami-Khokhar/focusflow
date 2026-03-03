@@ -83,11 +83,11 @@ export async function POST(request) {
             const isAcknowledgment = /^(ok|okay|sure|thanks|thank you|got it|will do|sounds good|great|perfect|nice|cool|yep|yeah|yes|alright|noted|done|understood|k|kk)[\s.!,?]*$/i.test(message.trim());
 
             if (!isAcknowledgment) {
-                if (process.env.GROQ_API_KEY) {
+                if (process.env.GEMINI_API_KEY) {
                     const recentHistory = await getMessages(sessionId, 5);
                     intent = await classifyIntentWithLLM(
                         message,
-                        process.env.GROQ_API_KEY,
+                        process.env.GEMINI_API_KEY,
                         recentHistory
                     );
                 }
