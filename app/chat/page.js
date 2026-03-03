@@ -77,15 +77,24 @@ export default function ChatPage() {
                 const session = await res.json();
                 setSessionId(session.id);
 
+                // Use server-side name if onboarding already captured it
+                if (session.display_name && session.display_name !== 'Friend') {
+                    setUserName(session.display_name);
+                    localStorage.setItem('focusflow_user_name', session.display_name);
+                }
+
                 // Load existing messages
                 if (session.messages && session.messages.length > 0) {
                     setMessages(session.messages);
                 }
 
-                // Send briefing if not yet delivered today, OR onboarding if fresh session
-                // This ensures briefing fires even if the session has messages from a late-night chat
-                if (!session.messages || session.messages.length === 0 || !session.briefing_delivered) {
-                    await sendSystemMessage(session.id, name, session.briefing_delivered);
+                // Onboarding takes priority: if user hasn't completed 3 questions, start onboarding
+                const onboardingStep = session.onboarding_step ?? 3;
+                if (onboardingStep < 3 && (!session.messages || session.messages.length === 0)) {
+                    await sendSystemMessage(session.id, name, false, 'onboarding');
+                } else if (!session.messages || session.messages.length === 0 || !session.briefing_delivered) {
+                    // Send briefing if not yet delivered today
+                    await sendSystemMessage(session.id, session.display_name || name, session.briefing_delivered);
                 }
 
                 // Only check for due reminders AFTER the briefing/greeting is shown.
@@ -333,11 +342,11 @@ export default function ChatPage() {
     // ────────────────────────────────────────────
     //  Send initial system greeting (briefing or onboarding)
     // ────────────────────────────────────────────
-    async function sendSystemMessage(sid, name, briefingDelivered) {
+    async function sendSystemMessage(sid, name, briefingDelivered, modeOverride = null) {
         setIsLoading(true);
         try {
             // Briefing triggers on first visit of each day (any time), not just mornings
-            const mode = !briefingDelivered ? 'briefing' : 'onboarding';
+            const mode = modeOverride || (!briefingDelivered ? 'briefing' : 'onboarding');
 
             const res = await fetch('/api/chat', {
                 method: 'POST',
@@ -491,6 +500,17 @@ export default function ChatPage() {
                         }
                     }
                 }
+            }
+            // After onboarding answers, sync the user name from the server
+            if (userName === 'Friend') {
+                try {
+                    const sessRes = await fetch(`/api/session?userId=${userId}`);
+                    const sessData = await sessRes.json();
+                    if (sessData.display_name && sessData.display_name !== 'Friend') {
+                        setUserName(sessData.display_name);
+                        localStorage.setItem('focusflow_user_name', sessData.display_name);
+                    }
+                } catch { /* silent */ }
             }
         } catch {
             setMessages((prev) => [

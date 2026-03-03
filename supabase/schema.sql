@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS users (
   display_name TEXT,
   timezone    TEXT DEFAULT 'UTC',
   created_at  TIMESTAMPTZ DEFAULT now(),
-  last_active_at TIMESTAMPTZ DEFAULT now()
+  last_active_at TIMESTAMPTZ DEFAULT now(),
+  onboarding_step INT DEFAULT 0,
+  main_focus  TEXT,
+  biggest_struggle TEXT
 );
 
 -- ───── MEMORY ITEMS ─────

@@ -14,6 +14,8 @@ import {
     getTodayBriefing,
     saveTodayBriefing,
     getRecentMessages,
+    getUser,
+    updateUser,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -33,6 +35,38 @@ export async function POST(request) {
         let mode = requestMode || 'chat';
         let userMessage = message;
         let remindAt = null;
+
+        // ── Onboarding flow ──────────────────────────────────
+        // Check if user still needs onboarding (step 0–2).
+        // Step 0 + mode='onboarding' → send Q1 (no answer to process yet)
+        // Step 1+ + mode='chat'     → user is answering the previous question
+        const user = await getUser(userId);
+        const onboardingStep = user?.onboarding_step ?? 3; // default 3 = complete
+
+        if (onboardingStep < 3) {
+            if (mode === 'onboarding' && onboardingStep === 0) {
+                // Initial trigger — just ask Q1, no user answer to save
+                mode = 'onboarding_q1';
+            } else if (mode === 'chat') {
+                // User is answering an onboarding question
+                await saveMessage(sessionId, 'user', message);
+
+                if (onboardingStep === 0) {
+                    // Answer to Q1: save their name
+                    const name = message.trim().replace(/^(i'm |my name is |call me |it's |i am )/i, '').replace(/[.!]+$/, '').trim();
+                    await updateUser(userId, { display_name: name, onboarding_step: 1 });
+                    mode = 'onboarding_q2';
+                } else if (onboardingStep === 1) {
+                    // Answer to Q2: save main focus
+                    await updateUser(userId, { main_focus: message.trim(), onboarding_step: 2 });
+                    mode = 'onboarding_q3';
+                } else if (onboardingStep === 2) {
+                    // Answer to Q3: save biggest struggle, mark onboarding complete
+                    await updateUser(userId, { biggest_struggle: message.trim(), onboarding_step: 3 });
+                    mode = 'onboarding_done';
+                }
+            }
+        }
 
         // For normal chat messages, detect intent
         if (mode === 'chat' && message !== '__MORNING_BRIEFING__' && message !== '__ONBOARDING__') {
@@ -196,8 +230,12 @@ export async function POST(request) {
         const promptMode = (mode === 'memory_capture' || mode === 'memory_recall' || mode === 'memory_delete' || mode === 'decomposition')
             ? 'chat'
             : mode;
+        // Re-fetch user for latest name/focus/struggle (may have been updated during onboarding)
+        const freshUser = (onboardingStep < 3) ? await getUser(userId) : user;
+        const displayName = freshUser?.display_name || userName || 'Friend';
+
         const systemPrompt = buildSystemPrompt({
-            userName: userName || 'Friend',
+            userName: displayName,
             currentTime: now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: userTimezone }) + ', ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone }),
             timezone: userTimezone,
             mode: promptMode,
@@ -205,6 +243,8 @@ export async function POST(request) {
             activeCheckIn: hasActiveCheckIn,
             checkInDueAt: currentSession.check_in_due_at,
             remindAt,
+            mainFocus: freshUser?.main_focus || null,
+            biggestStruggle: freshUser?.biggest_struggle || null,
         });
 
         // Create a streaming response
@@ -218,7 +258,7 @@ export async function POST(request) {
                         systemPrompt,
                         conversationHistory,
                         mode,
-                        userName: userName || 'Friend',
+                        userName: displayName,
                         memoryItems: memoryItemsForLLM,
                         userMessage,
                         remindAt,
