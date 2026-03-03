@@ -1,5 +1,5 @@
 // POST /api/chat — streaming chat endpoint
-import { buildSystemPrompt, detectIntent, detectCheckInAcceptance, classifyIntentWithLLM } from '@/lib/prompts';
+import { buildSystemPrompt, detectIntent, detectCheckInAcceptance } from '@/lib/prompts';
 import { streamChatResponse } from '@/lib/llm';
 import { parseRemindTime, parseTimeOffset } from '@/lib/timeParser';
 import {
@@ -83,15 +83,7 @@ export async function POST(request) {
             const isAcknowledgment = /^(ok|okay|sure|thanks|thank you|got it|will do|sounds good|great|perfect|nice|cool|yep|yeah|yes|alright|noted|done|understood|k|kk)[\s.!,?]*$/i.test(message.trim());
 
             if (!isAcknowledgment) {
-                if (process.env.GEMINI_API_KEY) {
-                    const recentHistory = await getMessages(sessionId, 5);
-                    intent = await classifyIntentWithLLM(
-                        message,
-                        process.env.GEMINI_API_KEY,
-                        recentHistory
-                    );
-                }
-                if (!intent) intent = detectIntent(message); // regex fallback
+                intent = detectIntent(message);
             }
 
             if (intent !== 'general') {
