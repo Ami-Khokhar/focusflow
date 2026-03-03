@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
   user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
   content     TEXT NOT NULL,
   category    TEXT CHECK (category IN ('Task','Reminder','Note','Idea','Link')) DEFAULT 'Note',
-  status      TEXT CHECK (status IN ('Active','Completed','Archived')) DEFAULT 'Active',
+  status      TEXT CHECK (status IN ('Active','Done','Archived')) DEFAULT 'Active',
   captured_at TIMESTAMPTZ DEFAULT now(),
   surfaced_at TIMESTAMPTZ
 );
@@ -48,28 +48,21 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 -- ───── ROW LEVEL SECURITY ─────
+-- FocusFlow does NOT use Supabase Auth — user IDs are app-managed UUIDs.
+-- All server-side writes use the service_role key which bypasses RLS.
+-- Anon key (client-side) is restricted to SELECT only for Realtime subscriptions.
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
--- Users can only access their own row
-CREATE POLICY users_own ON users
-  FOR ALL USING (auth.uid() = id);
+-- Allow anon SELECT on memory_items for Supabase Realtime subscriptions
+CREATE POLICY "Allow anon select memory_items" ON memory_items
+  FOR SELECT USING (true);
 
--- Memory items scoped to owner
-CREATE POLICY memory_own ON memory_items
-  FOR ALL USING (auth.uid() = user_id);
-
--- Sessions scoped to owner
-CREATE POLICY sessions_own ON sessions
-  FOR ALL USING (auth.uid() = user_id);
-
--- Messages scoped via session ownership
-CREATE POLICY messages_own ON messages
-  FOR ALL USING (
-    session_id IN (SELECT id FROM sessions WHERE user_id = auth.uid())
-  );
+-- Allow anon SELECT on messages for Realtime
+CREATE POLICY "Allow anon select messages" ON messages
+  FOR SELECT USING (true);
 
 -- ───── PUSH SUBSCRIPTIONS ─────
 CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -83,8 +76,7 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY push_own ON push_subscriptions
-  FOR ALL USING (auth.uid() = user_id);
+-- push_subscriptions: no anon access needed (all ops via service_role API routes)
 
 CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 

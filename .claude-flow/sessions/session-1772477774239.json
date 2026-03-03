@@ -1,0 +1,16 @@
+{
+  "id": "session-1772477774239",
+  "startedAt": "2026-03-02T18:56:14.239Z",
+  "platform": "win32",
+  "cwd": "c:\\Users\\Imart\\Documents\\FocusFlow",
+  "context": {},
+  "metrics": {
+    "edits": 1,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "restoredAt": "2026-03-02T19:06:29.090Z",
+  "endedAt": "2026-03-02T19:06:29.495Z",
+  "duration": 615257
+}

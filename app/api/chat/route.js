@@ -16,6 +16,8 @@ import {
     getRecentMessages,
     getUser,
     updateUser,
+    markMemoryItemDone,
+    findMemoryItemByContent,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -150,6 +152,15 @@ export async function POST(request) {
         // Handle memory delete
         if (mode === 'memory_delete') {
             await deleteLastMemoryItem(userId);
+        }
+
+        // Handle task completion — find and mark the task done
+        if (mode === 'task_complete') {
+            const task = await findMemoryItemByContent(userId, message);
+            if (task) {
+                await markMemoryItemDone(userId, task.id);
+                userMessage = task.content;
+            }
         }
 
         // Handle reminder reschedule

@@ -38,7 +38,7 @@ create table if not exists memory_items (
   user_id      uuid not null references users(id) on delete cascade,
   content      text not null,
   category     text not null check (category in ('Note', 'Task', 'Reminder', 'Link', 'Idea')),
-  status       text not null default 'Active' check (status in ('Active', 'Archived')),
+  status       text not null default 'Active' check (status in ('Active', 'Done', 'Archived')),
   captured_at  timestamptz not null default now(),
   surfaced_at  timestamptz,
   remind_at    timestamptz

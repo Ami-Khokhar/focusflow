@@ -548,7 +548,7 @@ export default function ChatPage() {
                         </div>
                     </div>
                 </div>
-                <span className="demo-badge">Demo</span>
+                {!process.env.NEXT_PUBLIC_SUPABASE_URL && <span className="demo-badge">Demo</span>}
             </header>
 
             {/* Messages */}
@@ -598,6 +598,11 @@ export default function ChatPage() {
                         ↑
                     </button>
                 </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ textAlign: 'center', padding: '8px', opacity: 0.5, fontSize: '0.75rem' }}>
+                <a href="/privacy" style={{ color: '#7c83ff', textDecoration: 'none' }}>Privacy Policy</a>
             </div>
         </div>
     );
