@@ -459,6 +459,7 @@ export default function ChatPage() {
                     userName: userName,
                     mode: 'chat',
                     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    clientHistory: [...messages, userMsg].slice(-20).map((m) => ({ role: m.role, content: m.content })),
                 }),
             });
 

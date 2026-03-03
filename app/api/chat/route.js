@@ -22,7 +22,7 @@ export const runtime = 'nodejs';
 
 export async function POST(request) {
     try {
-        const { message, sessionId, userId, userName, mode: requestMode, timezone } = await request.json();
+        const { message, sessionId, userId, userName, mode: requestMode, timezone, clientHistory } = await request.json();
 
         if (!sessionId || !userId) {
             return new Response(JSON.stringify({ error: 'Missing sessionId or userId' }), {
@@ -204,10 +204,10 @@ export async function POST(request) {
         const history = mode === 'briefing'
             ? await getRecentMessages(userId, 20)
             : await getMessages(sessionId, 20);
-        const conversationHistory = history.map((msg) => ({
-            role: msg.role,
-            content: msg.content,
-        }));
+        // Fallback to client-provided history when the server-side store is empty
+        // (happens in demo mode on Vercel serverless where global store resets between invocations)
+        const conversationHistory = (history.length > 0 ? history : (clientHistory || []))
+            .map((msg) => ({ role: msg.role, content: msg.content }));
 
         // Handle check-in acceptance — can come from LLM classifier or legacy regex
         const isCheckInAcceptance =
