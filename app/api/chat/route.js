@@ -1,5 +1,5 @@
 // POST /api/chat — streaming chat endpoint
-import { buildSystemPrompt, detectIntent, detectCheckInAcceptance } from '@/lib/prompts';
+import { buildSystemPrompt, detectIntent, detectCheckInAcceptance, classifyIntentWithLLM } from '@/lib/prompts';
 import { streamChatResponse } from '@/lib/llm';
 import { parseRemindTime, parseTimeOffset } from '@/lib/timeParser';
 import {
@@ -84,6 +84,12 @@ export async function POST(request) {
 
             if (!isAcknowledgment) {
                 intent = detectIntent(message);
+                // Regex is confident for clear patterns; use LLM only for ambiguous messages
+                if (intent === 'general') {
+                    const classifierKey = process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY;
+                    const llmIntent = await classifyIntentWithLLM(message, classifierKey, clientHistory || []);
+                    if (llmIntent) intent = llmIntent;
+                }
             }
 
             if (intent !== 'general') {
@@ -101,14 +107,12 @@ export async function POST(request) {
 
         // Handle memory capture (with time parsing)
         if (mode === 'memory_capture') {
-            // Extract the thing to remember from the message
-            let content = message
-                .replace(/remind me (to |about )?/i, '')
-                .replace(/remember (this|that)?:?\s*/i, '')
-                .replace(/note (this|that)?:?\s*/i, '')
-                .replace(/save (this|that)?:?\s*/i, '')
-                .replace(/don't let me forget (to |about )?/i, '')
-                .trim();
+            // Extract the thing to remember — capture what comes AFTER the trigger phrase
+            // (simple .replace() leaves any text before the trigger, e.g. "no, remind me to X" → "no, X")
+            const triggerMatch = message.match(
+                /(?:remind me(?:\s+(?:to|about))?|i\s+(?:need|want)\s+to\s+remember|remember\s+(?:this|that|to)?:?|note\s+(?:this|that|down)?:?|save\s+(?:this|that)?:?|don't\s+let\s+me\s+forget\s+(?:to|about)?|keep\s+(?:a\s+)?(?:note|track)\s+of)\s+([\s\S]+)/i
+            );
+            let content = triggerMatch ? triggerMatch[1].trim() : message.trim();
 
             // Parse time expression from the content
             const parsed = parseRemindTime(content);
