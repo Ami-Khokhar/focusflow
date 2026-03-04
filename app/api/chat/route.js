@@ -230,7 +230,7 @@ export async function POST(request) {
         // Build system prompt
         const now = new Date();
         const userTimezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const promptMode = (mode === 'memory_capture' || mode === 'memory_recall' || mode === 'memory_delete' || mode === 'decomposition')
+        const promptMode = (mode === 'memory_recall' || mode === 'memory_delete' || mode === 'decomposition')
             ? 'chat'
             : mode;
         // Re-fetch user for latest name/focus/struggle (may have been updated during onboarding)
@@ -246,6 +246,7 @@ export async function POST(request) {
             activeCheckIn: hasActiveCheckIn,
             checkInDueAt: currentSession.check_in_due_at,
             remindAt,
+            userMessage,
             mainFocus: freshUser?.main_focus || null,
             biggestStruggle: freshUser?.biggest_struggle || null,
         });
