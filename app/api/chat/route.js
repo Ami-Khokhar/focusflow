@@ -213,8 +213,24 @@ export async function POST(request) {
             : await getMessages(sessionId, 20);
         // Fallback to client-provided history when the server-side store is empty
         // (happens in demo mode on Vercel serverless where global store resets between invocations)
-        const conversationHistory = (history.length > 0 ? history : (clientHistory || []))
-            .map((msg) => ({ role: msg.role, content: msg.content }));
+        let historyToUse = history.length > 0 ? history : (clientHistory || []);
+
+        // Session reset: if there's a goodbye/farewell in recent history, only keep messages after it
+        // This prevents the LLM from pattern-matching old "Anytime!" responses when user says "hi" again
+        const goodbyePattern = /\b(bye|goodbye|see you|take care|talk later|i'm off|farewell|anytime|let me know)\b/i;
+        let lastGoodbyeIndex = -1;
+        for (let i = historyToUse.length - 1; i >= 0; i--) {
+            if (goodbyePattern.test(historyToUse[i].content)) {
+                lastGoodbyeIndex = i;
+                break;
+            }
+        }
+        // If there was a goodbye, and user now says "hi"/"hey"/"hello", reset context to messages after goodbye
+        if (lastGoodbyeIndex >= 0 && /^(hi|hey|hello|i'm back|i'm here)[\s.!,?]*$/i.test(message.trim())) {
+            historyToUse = historyToUse.slice(lastGoodbyeIndex + 1);
+        }
+
+        const conversationHistory = historyToUse.map((msg) => ({ role: msg.role, content: msg.content }));
 
         // Handle check-in acceptance — can come from LLM classifier or legacy regex
         const isCheckInAcceptance =
