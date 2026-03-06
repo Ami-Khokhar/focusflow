@@ -3,14 +3,10 @@
  * Combines rule-based DB diffing with an optional LLM cross-check.
  */
 
-import Groq from 'groq-sdk';
+
 import { buildBugDetectorPrompt, buildBugDetectorUserMessage } from '../prompts/bugPrompt.js';
 
-function getGroqClient() {
-    const apiKey = process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error('GROQ_API_KEY not set in environment.');
-    return new Groq({ apiKey });
-}
+import { getGroqClient } from '../../lib/groqClient.js';
 
 // ─── Rule-based DB checks ─────────────────────────────────────────────────────
 
@@ -136,10 +132,25 @@ export function checkMemoryRecall(assistantResponse, expectedItems) {
         return { bugFound: false, description: 'Empty memory state handled correctly.', reproSteps: '', suggestedFix: '' };
     }
 
-    const lowerResponse = assistantResponse.toLowerCase();
-    const missingItems = expectedItems.filter(
-        (item) => !lowerResponse.includes(item.content.toLowerCase().slice(0, 15))
-    );
+    const normalize = (text = '') => text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\b(the|a|an|to|for|my)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const lowerResponse = normalize(assistantResponse);
+    const missingItems = expectedItems.filter((item) => {
+        const words = normalize(item.content)
+            .split(' ')
+            .filter((w) => w.length > 2)
+            .slice(0, 6);
+        if (words.length === 0) return false;
+
+        const hitCount = words.filter((w) => lowerResponse.includes(w)).length;
+        const minRequired = Math.min(2, words.length);
+        return hitCount < minRequired;
+    });
 
     if (missingItems.length > 0) {
         return {
@@ -247,24 +258,118 @@ export function checkCheckInTimer(sessionBefore, sessionAfter, toleranceMs = 120
  * Falls back to a clean result if the LLM call fails.
  */
 export async function callBugDetectorLLM(scenario, dbBefore, dbAfter, assistantResponse) {
-    const client = getGroqClient();
+    let attempts = 0;
+    while (attempts < 3) {
+        try {
+            const client = getGroqClient();
+            const response = await client.chat.completions.create({
+                model: 'llama-3.1-8b-instant', // Downgraded to avoid 70B TPD limits
+                messages: [
+                    { role: 'system', content: buildBugDetectorPrompt() },
+                    { role: 'user', content: buildBugDetectorUserMessage(scenario, dbBefore, dbAfter, assistantResponse) },
+                ],
+                max_tokens: 400,
+                temperature: 0.1,
+                response_format: { type: 'json_object' },
+            });
 
-    try {
-        const response = await client.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
-            messages: [
-                { role: 'system', content: buildBugDetectorPrompt() },
-                { role: 'user', content: buildBugDetectorUserMessage(scenario, dbBefore, dbAfter, assistantResponse) },
-            ],
-            max_tokens: 400,
-            temperature: 0.1,
-            response_format: { type: 'json_object' },
-        });
-
-        const raw = response.choices[0]?.message?.content || '{}';
-        return JSON.parse(raw);
-    } catch (err) {
-        console.warn(`  [BugDetector] LLM cross-check failed: ${err.message}. Skipping LLM layer.`);
-        return { bugFound: false, description: 'LLM check skipped.', reproSteps: '', suggestedFix: '' };
+            const raw = response.choices[0]?.message?.content || '{}';
+            return JSON.parse(raw);
+        } catch (err) {
+            attempts++;
+            if (attempts >= 3) {
+                console.warn(`  [BugDetector] LLM cross-check failed after 3 tries: ${err.message}. Skipping LLM layer.`);
+                return { bugFound: false, description: 'LLM check skipped.', reproSteps: '', suggestedFix: '' };
+            }
+            await new Promise(r => setTimeout(r, 500));
+        }
     }
 }
+
+/**
+ * Check a multi-turn "information dump" conversation:
+ * - dump items should be captured
+ * - explicit forget target should be archived (not a different item)
+ * - final recall should include active targets and exclude forgotten target
+ */
+export function checkInfoDumpConversation(beforeAllItems, afterAllItems, transcript, config = {}) {
+    const expectedActive = (config.expectedActive || []).map((x) => x.toLowerCase());
+    const expectedForgotten = (config.expectedForgotten || '').toLowerCase();
+    const turnSnapshots = Array.isArray(config.turnSnapshots) ? config.turnSnapshots : [];
+    const finalTurnSnapshot = [...turnSnapshots].reverse().find((snap) => snap && Array.isArray(snap.allItems));
+    const effectiveAfterAllItems = finalTurnSnapshot ? finalTurnSnapshot.allItems : (afterAllItems || []);
+    const sourceLabel = finalTurnSnapshot
+        ? `turn ${finalTurnSnapshot.turn || '?'} snapshot`
+        : 'final post-run snapshot';
+
+    const finalAssistant = [...(transcript || [])].reverse().find((t) => t.role === 'assistant')?.content || '';
+    const finalLower = finalAssistant.toLowerCase();
+
+    const addedItems = (effectiveAfterAllItems || []).filter(
+        (a) => !(beforeAllItems || []).some((b) => b.id === a.id)
+    );
+    if (addedItems.length === 0) {
+        return {
+            bugFound: true,
+            description: `No memory items were created during the information-dump conversation (source: ${sourceLabel}).`,
+            reproSteps: 'Run the info_dump_conversation scenario and inspect memory_items inserts.',
+            suggestedFix: 'Review memory capture intent routing in /api/chat/route.js and extraction logic.',
+        };
+    }
+
+    const activeItems = (effectiveAfterAllItems || []).filter((i) => i.status === 'Active');
+    const archivedItems = (effectiveAfterAllItems || []).filter((i) => i.status === 'Archived');
+
+    const missingActive = expectedActive.filter(
+        (needle) => !activeItems.some((i) => (i.content || '').toLowerCase().includes(needle))
+    );
+    if (missingActive.length > 0) {
+        return {
+            bugFound: true,
+            description: `Expected active dump items missing: ${missingActive.join(', ')} (source: ${sourceLabel})`,
+            reproSteps: 'Run the info_dump_conversation scenario and compare active memory_items with dump input.',
+            suggestedFix: 'Improve multi-item extraction/parsing so each dumped item is persisted correctly.',
+        };
+    }
+
+    if (expectedForgotten) {
+        const forgottenArchived = archivedItems.some((i) => (i.content || '').toLowerCase().includes(expectedForgotten));
+        if (!forgottenArchived) {
+            return {
+                bugFound: true,
+                description: `Target forgotten item was not archived: "${expectedForgotten}" (source: ${sourceLabel})`,
+                reproSteps: 'In info_dump_conversation, issue a targeted forget command and inspect archived item content.',
+                suggestedFix: 'Update deletion flow to resolve and archive the requested item, not only the latest one.',
+            };
+        }
+    }
+
+    const missingInFinalRecall = expectedActive.filter((needle) => !finalLower.includes(needle));
+    if (missingInFinalRecall.length > 0) {
+        return {
+            bugFound: true,
+            description: `Final recall omitted active items: ${missingInFinalRecall.join(', ')}`,
+            reproSteps: 'Check final assistant recall output in transcript against active memory_items.',
+            suggestedFix: 'Strengthen memory recall prompt/context construction to include all active items.',
+        };
+    }
+
+    if (expectedForgotten && finalLower.includes(expectedForgotten)) {
+        return {
+            bugFound: true,
+            description: `Final recall still mentions forgotten item: "${expectedForgotten}"`,
+            reproSteps: 'After forget command, request recall and verify removed item is absent.',
+            suggestedFix: 'Ensure recall sources only active memory items and excludes archived entries.',
+        };
+    }
+
+    return {
+        bugFound: false,
+        description: `Information dump conversation persisted, recalled, and forgot items correctly (validated via ${sourceLabel}).`,
+        reproSteps: '',
+        suggestedFix: '',
+    };
+}
+
+
+

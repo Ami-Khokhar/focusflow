@@ -7,6 +7,7 @@ import {
     saveMessage,
     saveMemoryItem,
     deleteLastMemoryItem,
+    deleteMemoryItemByContent,
     getMemoryItems,
     updateSession,
     getOrCreateSession,
@@ -18,13 +19,14 @@ import {
     updateUser,
     markMemoryItemDone,
     findMemoryItemByContent,
+    getLatestActiveTask,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
 export async function POST(request) {
     try {
-        const { message, sessionId, userId, userName, mode: requestMode, timezone, clientHistory } = await request.json();
+        const { message, sessionId, userId, userName, mode: requestMode, timezone, clientHistory, content } = await request.json();
 
         if (!sessionId || !userId) {
             return new Response(JSON.stringify({ error: 'Missing sessionId or userId' }), {
@@ -80,7 +82,7 @@ export async function POST(request) {
 
             // Guard: short acknowledgments must never be misclassified as memory_capture
             // or reminder_reschedule — they are always general conversation.
-            const isAcknowledgment = /^(ok|okay|sure|thanks|thank you|got it|will do|sounds good|great|perfect|nice|cool|yep|yeah|yes|alright|noted|done|understood|k|kk)[\s.!,?]*$/i.test(message.trim());
+            const isAcknowledgment = /^(ok|okay|sure|thanks|thank you|got it|will do|sounds good|great|perfect|nice|cool|yep|yeah|yes|alright|noted|understood|k|kk)[\s.!,?]*$/i.test(message.trim());
 
             if (!isAcknowledgment) {
                 intent = detectIntent(message);
@@ -110,9 +112,11 @@ export async function POST(request) {
             // Extract the thing to remember — capture what comes AFTER the trigger phrase
             // (simple .replace() leaves any text before the trigger, e.g. "no, remind me to X" → "no, X")
             const triggerMatch = message.match(
-                /(?:remind me(?:\s+(?:to|about))?|i\s+(?:need|want)\s+to\s+remember|remember\s+(?:this|that|to)?:?|note\s+(?:this|that|down)?:?|save\s+(?:this|that)?:?|don't\s+let\s+me\s+forget\s+(?:to|about)?|keep\s+(?:a\s+)?(?:note|track)\s+of)\s+([\s\S]+)/i
+                /(?:remind me(?:\s+(?:to|about))?|i\s+(?:need|want)\s+to\s+remember|remember\s+(?:this|that|these|to|the following)?:?\s*|note\s+(?:this|that|down)?:?\s*|save\s+(?:this|that)?:?\s*|don't\s+let\s+me\s+forget\s+(?:to|about)?|keep\s+(?:a\s+)?(?:note|track)\s+of)\s*([\s\S]+)/i
             );
             let content = triggerMatch ? triggerMatch[1].trim() : message.trim();
+            // Strip residual list-style prefixes (e.g. "these:" or "the following:")
+            content = content.replace(/^(these|the following)\s*:\s*/i, '').trim();
 
             // Parse time expression from the content
             const parsed = parseRemindTime(content);
@@ -120,39 +124,77 @@ export async function POST(request) {
             remindAt = parsed.remindAt;
 
             if (content) {
-                // Auto-categorize
-                let category = 'Note';
-                const lower = content.toLowerCase();
-                if (remindAt) {
-                    category = 'Reminder';
-                } else if (/call |email |submit |finish |complete |do |make |write |send |buy |get /i.test(lower)) {
-                    category = 'Task';
-                } else if (/remind|reminder|appointment|meeting/i.test(lower)) {
-                    category = 'Reminder';
-                } else if (/http|www\.|\.com|\.org|\.io/i.test(lower)) {
-                    category = 'Link';
-                } else if (/idea|what if|maybe|could/i.test(lower)) {
-                    category = 'Idea';
+                // Multi-item capture for dump-style messages.
+                // Supports commas, semicolons, new lines, and list joins with "and".
+                const isLikelyListDump = /(?:\bthese\b|\bfollowing\b|[,;\n]|\band\b)/i.test(message);
+                const normalizedListText = isLikelyListDump
+                    ? content
+                        .replace(/\s+(?:and|then)\s+/gi, ', ')
+                        .replace(/[;\n]+/g, ',')
+                    : content;
+                const items = isLikelyListDump
+                    ? normalizedListText.split(/,\s*/).map((s) => s.trim()).filter(Boolean)
+                    : [content];
+
+                for (const item of items) {
+                    // Auto-categorize each item individually
+                    let category = 'Note';
+                    const lowerItem = item.toLowerCase();
+                    if (remindAt && items.length === 1) {
+                        category = 'Reminder';
+                    } else if (/call |email |submit |finish |complete |do |make |write |send |buy |get /i.test(lowerItem)) {
+                        category = 'Task';
+                    } else if (/remind|reminder|appointment|meeting/i.test(lowerItem)) {
+                        category = 'Reminder';
+                    } else if (/http|www\.|\.com|\.org|\.io/i.test(lowerItem)) {
+                        category = 'Link';
+                    } else if (/idea|what if|maybe|could/i.test(lowerItem)) {
+                        category = 'Idea';
+                    }
+
+                    await saveMemoryItem(userId, item, category, (items.length === 1 ? remindAt : null));
                 }
+                userMessage = items.length > 1 ? items.join(', ') : content;
 
-                await saveMemoryItem(userId, content, category, remindAt);
-                userMessage = content;
-
-                // If a time was parsed, switch to reminder_set mode for confirmation
-                if (remindAt) {
+                // If a time was parsed (single item), switch to reminder_set mode for confirmation
+                if (remindAt && items.length === 1) {
                     mode = 'reminder_set';
                 }
             }
         }
 
-        // Handle memory delete
+        // Handle memory delete (targeted when possible, fallback only for generic delete)
         if (mode === 'memory_delete') {
-            await deleteLastMemoryItem(userId);
+            const targetMatch = message.match(/(?:forget|delete|remove|undo)\s+(?:that|this|the)?\s*([\s\S]*)/i);
+            const rawTarget = (targetMatch?.[1] || '').trim();
+            const normalizedTarget = rawTarget
+                .replace(/^(item|thing|note|memory)\b/i, '')
+                .replace(/\b(please|actually|now)\b/gi, '')
+                .replace(/\b(item|thing|note|memory)\b$/i, '')
+                .replace(/[.!?,]+$/g, '')
+                .trim();
+
+            const hasSpecificTarget = normalizedTarget.length >= 4 && !/^(that|this|it|last|latest)$/i.test(normalizedTarget);
+            if (hasSpecificTarget) {
+                const deleted = await deleteMemoryItemByContent(userId, normalizedTarget);
+                if (deleted) {
+                    userMessage = deleted.content;
+                } else {
+                    // Don't silently delete the wrong item when a specific target wasn't found.
+                    mode = 'chat';
+                }
+            } else {
+                const deleted = await deleteLastMemoryItem(userId);
+                if (deleted) {
+                    userMessage = deleted.content;
+                }
+            }
         }
 
         // Handle task completion — find and mark the task done
         if (mode === 'task_complete') {
-            const task = await findMemoryItemByContent(userId, message);
+            const matchedTask = await findMemoryItemByContent(userId, message);
+            const task = matchedTask || await getLatestActiveTask(userId);
             if (task) {
                 await markMemoryItemDone(userId, task.id);
                 userMessage = task.content;
@@ -170,7 +212,7 @@ export async function POST(request) {
                     remindAt = newRemindAt;
                 }
             }
-            mode = 'reminder_set'; // Reuse reminder_set confirmation response
+            // Keep mode as 'reminder_reschedule' so the LLM uses the dedicated reschedule prompt
         }
 
         // Briefing: serve cached version if it exists (avoids regenerating every page refresh)
@@ -200,6 +242,9 @@ export async function POST(request) {
 
         // Handle proactive message save (fire-and-forget from client polling)
         if (mode === 'proactive_save') {
+            if (content && typeof content === 'string') {
+                await saveMessage(sessionId, 'assistant', content);
+            }
             return new Response(JSON.stringify({ ok: true }), {
                 headers: { 'Content-Type': 'application/json' },
             });
@@ -250,9 +295,7 @@ export async function POST(request) {
         // Build system prompt
         const now = new Date();
         const userTimezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const promptMode = (mode === 'memory_recall' || mode === 'memory_delete' || mode === 'decomposition')
-            ? 'chat'
-            : mode;
+        const promptMode = mode === 'decomposition' ? 'chat' : mode;
         // Re-fetch user for latest name/focus/struggle (may have been updated during onboarding)
         const freshUser = (onboardingStep < 3) ? await getUser(userId) : user;
         const displayName = freshUser?.display_name || userName || 'Friend';
@@ -331,3 +374,9 @@ export async function POST(request) {
         });
     }
 }
+
+
+
+
+
+

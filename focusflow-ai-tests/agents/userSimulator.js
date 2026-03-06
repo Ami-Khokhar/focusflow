@@ -5,11 +5,7 @@
 import Groq from 'groq-sdk';
 import { buildSimulatorPrompt, buildRandomConversationPrompt } from '../prompts/simulatorPrompt.js';
 
-function getGroqClient() {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error('GROQ_API_KEY not set in environment.');
-    return new Groq({ apiKey });
-}
+import { getGroqClient } from '../../lib/groqClient.js';
 
 /**
  * Generate one realistic user message for a given scenario and conversation history.
@@ -40,14 +36,23 @@ export async function generateTurn(scenario, history = []) {
         });
     }
 
-    const response = await client.chat.completions.create({
-        model: 'llama-3.1-8b-instant',
-        messages,
-        max_tokens: 80,
-        temperature: 0.85,
-    });
-
-    return response.choices[0]?.message?.content?.trim() || scenario.seedMessage;
+    let attempts = 0;
+    while (attempts < 3) {
+        try {
+            const client = getGroqClient();
+            const response = await client.chat.completions.create({
+                model: 'llama-3.1-8b-instant',
+                messages,
+                max_tokens: 80,
+                temperature: 0.85,
+            });
+            return response.choices[0]?.message?.content?.trim() || scenario.seedMessage;
+        } catch (err) {
+            attempts++;
+            if (attempts >= 3) return scenario.seedMessage;
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
 }
 
 /**
@@ -67,18 +72,30 @@ export async function generateRandomConversation({ turns = 10, onTurn } = {}) {
     for (let i = 1; i <= turns; i++) {
         const systemPrompt = buildRandomConversationPrompt(i, turns);
 
-        const response = await client.chat.completions.create({
-            model: 'llama-3.1-8b-instant',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                ...messages.slice(-4),
-                { role: 'user', content: `Generate turn ${i}. Output ONLY the raw user message.` },
-            ],
-            max_tokens: 80,
-            temperature: 0.9,
-        });
-
-        const userMsg = response.choices[0]?.message?.content?.trim() || 'ok so i forgot what i was doing';
+        let responseContent = 'ok so i forgot what i was doing';
+        let attempts = 0;
+        while (attempts < 3) {
+            try {
+                const client = getGroqClient();
+                const response = await client.chat.completions.create({
+                    model: 'llama-3.1-8b-instant',
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        ...messages.slice(-4),
+                        { role: 'user', content: `Generate turn ${i}. Output ONLY the raw user message.` },
+                    ],
+                    max_tokens: 80,
+                    temperature: 0.9,
+                });
+                responseContent = response.choices[0]?.message?.content?.trim() || responseContent;
+                break;
+            } catch (err) {
+                attempts++;
+                if (attempts >= 3) break;
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+        const userMsg = responseContent;
         messages.push({ role: 'user', content: userMsg });
 
         if (onTurn) await onTurn(i, userMsg);

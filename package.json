@@ -9,7 +9,11 @@
     "lint": "next lint",
     "ai-test": "node focusflow-ai-tests/tests/runTests.js",
     "ai-test:random": "node focusflow-ai-tests/tests/runTests.js --random",
-    "ai-test:long": "node focusflow-ai-tests/tests/runTests.js --long"
+    "ai-test:long": "node focusflow-ai-tests/tests/runTests.js --long",
+    "ai-test:matrix": "node focusflow-ai-tests/tests/runTests.js --matrix",
+    "ai-test:matrix:quick": "node focusflow-ai-tests/tests/runTests.js --matrix --max-variants 2",
+    "ai-test:flex": "node focusflow-ai-tests/tests/runTests.js --flex --shuffle --repeat 2",
+    "ai-test:flex:quick": "node focusflow-ai-tests/tests/runTests.js --flex --max-runs 16 --shuffle"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",

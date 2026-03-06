@@ -1,5 +1,5 @@
 /**
- * scenarios.js — The 8 deterministic test scenarios for FocusFlow.
+ * scenarios.js — Deterministic and conversation test scenarios for FocusFlow.
  *
  * Each scenario defines:
  *   name             — display name for the report
@@ -29,6 +29,7 @@ import {
     checkTaskDone,
     checkMemoryDeleted,
     checkCheckInTimer,
+    checkInfoDumpConversation,
 } from '../agents/bugDetector.js';
 
 export const scenarios = [
@@ -91,7 +92,7 @@ export const scenarios = [
         seedMessage: 'actually push that back 30 minutes',
         expectedIntent: 'reminder_reschedule',
         expectedBehavior:
-            'Confirms the reminder has been rescheduled by 30 minutes. Warm acknowledgment.',
+            'Warm, short confirmation that the reminder was pushed back. Mentioning what the reminder is about is fine. Does NOT need a focus session offer, coaching suggestion, or to mark anything in memory. A sentence like "Got it — I pushed that reminder to [time] to [content]" is a perfect PASS.',
         expectedDbChange: 'Existing Reminder item remind_at updated to now+30 minutes.',
 
         async setup(db, userId) {
@@ -123,7 +124,7 @@ export const scenarios = [
         seedMessage: 'wait what was I supposed to do again? what do you remember?',
         expectedIntent: 'memory_recall',
         expectedBehavior:
-            'Lists the stored memory items by name. Warm, concise. Offers to add or remove.',
+            'Lists stored items warmly with bullet points. Optionally offers to help choose one to start. Does NOT need a focus session. Brief and friendly.',
         expectedDbChange: 'No DB change expected — this is a read-only operation.',
 
         async setup(db, userId) {
@@ -186,7 +187,7 @@ export const scenarios = [
         seedMessage: 'done!!',
         expectedIntent: 'task_complete',
         expectedBehavior:
-            'Enthusiastically celebrates the completion. Asks what is next. Short and energizing.',
+            'Celebrates completion enthusiastically. A short response like "Nice work finishing that! What\'s next?" is a perfect PASS. Does NOT need to mention the task by name, mark it as done explicitly, or offer a focus session. Short and energizing is ideal.',
         expectedDbChange: 'An existing memory_items row should have status updated to "Done".',
 
         async setup(db, userId) {
@@ -210,7 +211,7 @@ export const scenarios = [
         seedMessage: 'yes please set that timer',
         expectedIntent: 'check_in_acceptance',
         expectedBehavior:
-            'Confirms focus mode is on. Mentions 25 minutes. Encouraging and brief.',
+            'Confirms focus mode is on or encourages the user to start. Mentions the timer (does NOT have to explicitly say 25 minutes). Encouraging and brief. A sentence like "Got it! I\'ll be quiet until then. Go ahead and get started" is a perfect PASS.',
         expectedDbChange: 'sessions.check_in_due_at set to now + 25 minutes.',
 
         async setup(db, userId) {
@@ -230,6 +231,38 @@ export const scenarios = [
     // ─────────────────────────────────────────────────────────────────────────────
     // 8. Reminder Deletion
     // ─────────────────────────────────────────────────────────────────────────────
+    {
+        id: 'info_dump_conversation',
+        name: 'Info Dump Conversation',
+        description: 'Multi-turn dump/recall/forget flow should persist multiple items and forget the targeted one.',
+        goal: 'Simulate a user dumping multiple items, recalling them, forgetting one, and recalling again.',
+        seedMessage: 'remember these things',
+        multiTurnMessages: [
+            'remember these: call bank, submit rent receipt, ask Rahul about API caching',
+            'also remind me to renew car insurance in 2 hours',
+            'what do you remember right now?',
+            'forget the API caching item',
+            'what do you remember now?'
+        ],
+        expectedIntent: 'memory_capture',
+        expectedBehavior: 'Maintains continuity across turns and accurately reflects memory state changes.',
+        expectedDbChange: 'Multiple items captured, targeted item archived, and final recall excludes forgotten item.',
+        disableBehaviorEval: true,
+        behaviorEvalReason: 'Conversation-level scenario uses deterministic DB/transcript assertions instead of single-turn style evaluation.',
+
+        async setup(db, userId) {
+            return {};
+        },
+
+        async dbCheck(db, userId, sessionId, seedData, before, after, assistantResponse, transcript, runtime = {}) {
+            return checkInfoDumpConversation(before.allItems, after.allItems, transcript, {
+                expectedActive: ['call bank', 'submit rent receipt', 'renew car insurance'],
+                expectedForgotten: 'api caching',
+                turnSnapshots: runtime.turnSnapshots || [],
+            });
+        },
+    },
+
     {
         id: 'memory_delete',
         name: 'Memory Deletion',
@@ -255,3 +288,5 @@ export const scenarios = [
         },
     },
 ];
+
+

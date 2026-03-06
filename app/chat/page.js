@@ -123,6 +123,7 @@ export default function ChatPage() {
     // Clears only when the tab is actually closed (appropriate boundary for a session)
     // Initialize empty, then hydrate from sessionStorage in useEffect (client-side only)
     const deliveredReminderIds = useRef(new Set());
+    const deliveredCheckInKeys = useRef(new Set());
 
     // Shared handler — called by both Realtime and polling paths
     const handleDueReminder = useCallback((reminder) => {
@@ -152,14 +153,22 @@ export default function ChatPage() {
                     handleDueReminder(reminder);
                 }
             }
-            if (data.checkInDue) {
-                await triggerCheckIn();
+            if (data.checkInDue && data.checkInDueAt) {
+                const checkInKey = `${sessionId}_${data.checkInDueAt}`;
+                if (!deliveredCheckInKeys.current.has(checkInKey)) {
+                    deliveredCheckInKeys.current.add(checkInKey);
+                    sessionStorage.setItem(
+                        'ff_delivered_checkins',
+                        JSON.stringify([...deliveredCheckInKeys.current])
+                    );
+                    await triggerCheckIn(data.checkInDueAt);
+                }
             }
         } catch {
             // Silent — will retry on next poll
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [userId, handleDueReminder]);
+    }, [userId, sessionId, handleDueReminder]);
 
     // Supabase Realtime subscription — fires instantly when cron marks a reminder surfaced
     useEffect(() => {
@@ -199,13 +208,23 @@ export default function ChatPage() {
         return () => clearInterval(interval);
     }, [userId, sessionId, checkProactiveMessages]);
 
-    // Hydrate deliveredReminderIds from sessionStorage after mount (client-side only)
+    // Hydrate delivered IDs from sessionStorage after mount (client-side only)
     useEffect(() => {
         const stored = sessionStorage.getItem('ff_delivered_reminders');
         if (stored) {
             try {
                 const ids = JSON.parse(stored);
                 deliveredReminderIds.current = new Set(ids);
+            } catch {
+                // Silent — malformed JSON, just start fresh
+            }
+        }
+
+        const storedCheckIns = sessionStorage.getItem('ff_delivered_checkins');
+        if (storedCheckIns) {
+            try {
+                const keys = JSON.parse(storedCheckIns);
+                deliveredCheckInKeys.current = new Set(keys);
             } catch {
                 // Silent — malformed JSON, just start fresh
             }
@@ -269,11 +288,11 @@ export default function ChatPage() {
                 userId,
                 userName,
                 mode: 'proactive_save',
+                content,
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             }),
         }).catch(() => {});
     }
-
     // Stream a check-in message from the API
     async function triggerCheckIn() {
         if (isLoadingRef.current) return;
@@ -325,15 +344,20 @@ export default function ChatPage() {
                     }
                 }
             }
+
+            if (fullText) {
+                saveProactiveMessage(fullText);
+            }
         } catch {
+            const fallbackText = "Hey! It's been about 25 minutes. How's it going? No pressure — want to **keep going**, **take a break**, or **try something different**?";
             setMessages((prev) => [
                 ...prev,
                 {
                     role: 'assistant',
-                    content:
-                        "Hey! It's been about 25 minutes. How's it going? No pressure — want to **keep going**, **take a break**, or **try something different**?",
+                    content: fallbackText,
                 },
             ]);
+            saveProactiveMessage(fallbackText);
         } finally {
             setIsLoading(false);
         }

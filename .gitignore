@@ -38,6 +38,7 @@ npm-debug.log*
 .claude/**/*.db
 .claude/**/*.log
 .claude/cache/
- 
- focusflow-ai-tests/
- 
+# AI Test Suite
+focusflow-ai-tests/
+focusflow-ai-tests/.env
+focusflow-ai-tests/reports/

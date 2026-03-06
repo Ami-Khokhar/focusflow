@@ -6,12 +6,7 @@
 import Groq from 'groq-sdk';
 import { buildEvaluatorPrompt, buildEvaluatorUserMessage } from '../prompts/evaluatorPrompt.js';
 
-function getGroqClient() {
-    // Prefer a second key to avoid rate-limit clashes with the simulator
-    const apiKey = process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error('GROQ_API_KEY not set in environment.');
-    return new Groq({ apiKey });
-}
+import { getGroqClient } from '../../lib/groqClient.js';
 
 // ─── Forbidden word / phrase check (fast, no LLM needed) ────────────────────
 
@@ -67,35 +62,38 @@ export async function evaluate(userMessage, assistantResponse, scenario) {
         };
     }
 
-    // LLM evaluation for tone, coaching style, and intent
-    const client = getGroqClient();
+    let attempts = 0;
+    while (attempts < 3) {
+        try {
+            const client = getGroqClient();
+            const response = await client.chat.completions.create({
+                model: 'llama-3.1-8b-instant', // Downgraded to avoid 70B TPD limits
+                messages: [
+                    { role: 'system', content: buildEvaluatorPrompt() },
+                    { role: 'user', content: prompt },
+                ],
+                max_tokens: 300,
+                temperature: 0.2, // low temperature for deterministic evaluation
+                response_format: { type: 'json_object' },
+            });
 
-    const prompt = buildEvaluatorUserMessage(scenario, userMessage, assistantResponse);
+            const raw = response.choices[0]?.message?.content || '{}';
+            const parsed = JSON.parse(raw);
 
-    try {
-        const response = await client.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
-            messages: [
-                { role: 'system', content: buildEvaluatorPrompt() },
-                { role: 'user', content: prompt },
-            ],
-            max_tokens: 300,
-            temperature: 0.2, // low temperature for deterministic evaluation
-            response_format: { type: 'json_object' },
-        });
-
-        const raw = response.choices[0]?.message?.content || '{}';
-        const parsed = JSON.parse(raw);
-
-        return {
-            verdict: parsed.verdict === 'PASS' ? 'PASS' : 'FAIL',
-            reason: parsed.reason || 'No reason provided.',
-            suggestedFix: parsed.suggestedFix || '',
-        };
-    } catch (err) {
-        // If the LLM call fails, degrade gracefully with a heuristic result
-        console.warn(`  [BehaviorEvaluator] LLM call failed: ${err.message}. Using heuristic fallback.`);
-        return heuristicEvaluate(assistantResponse, scenario);
+            return {
+                verdict: parsed.verdict === 'PASS' ? 'PASS' : 'FAIL',
+                reason: parsed.reason || 'No reason provided.',
+                suggestedFix: parsed.suggestedFix || '',
+            };
+        } catch (err) {
+            attempts++;
+            if (attempts >= 3) {
+                // If the LLM call fails completely, degrade gracefully with a heuristic result
+                console.warn(`  [BehaviorEvaluator] LLM call failed after 3 tries: ${err.message}. Using heuristic fallback.`);
+                return heuristicEvaluate(assistantResponse, scenario);
+            }
+            await new Promise(r => setTimeout(r, 500));
+        }
     }
 }
 

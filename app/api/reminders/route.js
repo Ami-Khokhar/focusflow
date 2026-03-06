@@ -1,7 +1,13 @@
-// GET /api/reminders â€” check for due reminders and check-ins
+// GET /api/reminders — check for due reminders and check-ins
 // Also sends Web Push notifications to all subscribed devices for this user.
 import webpush from 'web-push';
-import { getDueReminders, markReminderSurfaced, getOrCreateSession, getPushSubscriptions, deletePushSubscription } from '@/lib/db';
+import {
+    getDueReminders,
+    markReminderSurfaced,
+    consumeDueCheckIn,
+    getPushSubscriptions,
+    deletePushSubscription,
+} from '@/lib/db';
 
 // Configure VAPID for Web Push
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -51,13 +57,12 @@ export async function GET(request) {
         }
     }
 
-    // Check for due check-in
-    const session = await getOrCreateSession(userId);
-    const now = new Date().toISOString();
-    const checkInDue = !!(session.check_in_due_at && session.check_in_due_at <= now);
+    // Consume due check-in once so polling/visibility races cannot retrigger it.
+    const checkInResult = await consumeDueCheckIn(userId);
 
     return Response.json({
         reminders: dueReminders,
-        checkInDue,
+        checkInDue: checkInResult.consumed,
+        checkInDueAt: checkInResult.dueAt,
     });
 }
