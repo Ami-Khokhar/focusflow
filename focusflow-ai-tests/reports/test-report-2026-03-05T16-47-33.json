@@ -1,0 +1,195 @@
+{
+  "label": "FocusFlow Deterministic Suite",
+  "startTime": "2026-03-05T16:47:11.681Z",
+  "endTime": "2026-03-05T16:47:33.368Z",
+  "durationMs": 21687,
+  "scenarios": [
+    {
+      "name": "Memory Capture",
+      "status": "PASS",
+      "reason": "The response acknowledges the user's request warmly and confirms the item was saved without listing next steps or using forbidden language.",
+      "suggestedFix": "",
+      "bug": {
+        "bugFound": false,
+        "description": "Memory capture created correctly.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "remember to call mom"
+        },
+        {
+          "role": "assistant",
+          "content": "**Got it**: call mom is saved."
+        }
+      ],
+      "durationMs": 1883
+    },
+    {
+      "name": "Reminder Creation",
+      "status": "PASS",
+      "reason": "The assistant response is a warm and brief confirmation of the reminder, aligning with FocusFlow's coaching standards.",
+      "suggestedFix": "",
+      "bug": {
+        "bugFound": false,
+        "description": "Reminder created with correct time.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "remind me to send the email in 10 minutes"
+        },
+        {
+          "role": "assistant",
+          "content": "Reminder set: \"send the email\" at **10:27 PM**."
+        }
+      ],
+      "durationMs": 1487
+    },
+    {
+      "name": "Reminder Reschedule",
+      "status": "FAIL",
+      "reason": "The assistant response lacks an empathetic tone and does not acknowledge the user's intent in a coaching style.",
+      "suggestedFix": "Revise the response to include a warm acknowledgment, such as 'Got it, I've pushed that back 30 minutes for you. Your reminder is now set for 10:57 PM. How's your focus on sending that email?'",
+      "bug": {
+        "bugFound": false,
+        "description": "Reminder rescheduled to correct time.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "actually push that back 30 minutes"
+        },
+        {
+          "role": "assistant",
+          "content": "Reminder updated: \"send the email\" at **10:57 PM**."
+        }
+      ],
+      "durationMs": 2058
+    },
+    {
+      "name": "Memory Recall",
+      "status": "FAIL",
+      "reason": "The response does not offer a focus check-in or suggest a tiny step to manage the recalled items.",
+      "suggestedFix": "Add a sentence like 'Would you like to focus on one of these tasks for the next 10 minutes?' to encourage a tiny step and offer a focus session.",
+      "bug": {
+        "bugFound": true,
+        "description": "Memory recall response is missing item(s): finish the project report, call dentist",
+        "reproSteps": "Send \"what do you remember?\" and compare response against memory_items in DB.",
+        "suggestedFix": "Check getMemoryItems() query in lib/db.js and ensure the memory_recall system prompt includes all items."
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "wait what was I supposed to do again? what do you remember?"
+        },
+        {
+          "role": "assistant",
+          "content": "You've shared:\n* Call mom\n* Send an email (reminder set for **10:57 PM**)"
+        }
+      ],
+      "durationMs": 1589
+    },
+    {
+      "name": "Task Decomposition",
+      "status": "PASS",
+      "reason": "The assistant response meets all FocusFlow standards by providing a compassionate tone, a single manageable step, and offering a focus session check-in.",
+      "suggestedFix": "",
+      "bug": {
+        "bugFound": false,
+        "description": "Decomposition responded with step and focus offer.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "I'm so overwhelmed with this project, I don't even know where to start"
+        },
+        {
+          "role": "assistant",
+          "content": "Open a blank document and type one sentence about what the project is about. Want me to check in with you in 25 minutes?"
+        }
+      ],
+      "durationMs": 1779
+    },
+    {
+      "name": "Task Completion",
+      "status": "FAIL",
+      "reason": "The assistant response does not enthusiastically celebrate the task completion and instead suggests breaking down a project, which does not align with the user's intent of completing a task.",
+      "suggestedFix": "Respond with a celebratory message, such as 'Yay, you're done! What's next?' to acknowledge the user's progress and encourage them to move forward.",
+      "bug": {
+        "bugFound": true,
+        "description": "Task \"finish the project report\" exists but status was not updated to 'Done'.",
+        "reproSteps": "Send \"done!\" after a task is active. Check memory_items.status.",
+        "suggestedFix": "Check markMemoryItemDone() in lib/db.js and the task_complete handler in route.js."
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "done!!"
+        },
+        {
+          "role": "assistant",
+          "content": "**Progress made**. One option is to break down the project into smaller tasks. Want to try that?"
+        }
+      ],
+      "durationMs": 1823
+    },
+    {
+      "name": "Check-in Acceptance",
+      "status": "PASS",
+      "reason": "The assistant response is brief, encouraging, and confirms the focus mode is on with a timer set, aligning with FocusFlow's coaching standards.",
+      "suggestedFix": "",
+      "bug": {
+        "bugFound": false,
+        "description": "Check-in timer set correctly at 25 minutes.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "yes please set that timer"
+        },
+        {
+          "role": "assistant",
+          "content": "**Timer set**. I'll be quiet until then. Go ahead and focus!"
+        }
+      ],
+      "durationMs": 1810
+    },
+    {
+      "name": "Memory Deletion",
+      "status": "PASS",
+      "reason": "The assistant response is light, reassuring, and confirms the item has been removed without drama.",
+      "suggestedFix": "",
+      "bug": {
+        "bugFound": false,
+        "description": "Item correctly soft-deleted (Archived).",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "forget that actually"
+        },
+        {
+          "role": "assistant",
+          "content": "The project task is removed. No problem at all."
+        }
+      ],
+      "durationMs": 1697
+    }
+  ],
+  "passCount": 5,
+  "failCount": 3,
+  "errorCount": 0
+}

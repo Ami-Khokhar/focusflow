@@ -1,0 +1,57 @@
+FocusFlow AI Test Transcripts — 3/5/2026, 9:49:06 PM
+
+============================================================
+SCENARIO: Memory Capture [FAIL]
+============================================================
+[USER]: remember to call mom
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄
+
+============================================================
+SCENARIO: Reminder Creation [FAIL]
+============================================================
+[USER]: remind me to send the email in 10 minutes
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄
+
+============================================================
+SCENARIO: Reminder Reschedule [FAIL]
+============================================================
+[USER]: actually push that back 30 minutes
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄
+
+============================================================
+SCENARIO: Memory Recall [FAIL]
+============================================================
+[USER]: wait what was I supposed to do again? what do you remember?
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄
+
+============================================================
+SCENARIO: Task Decomposition [FAIL]
+============================================================
+[USER]: I'm so overwhelmed with this project, I don't even know where to start
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄
+
+============================================================
+SCENARIO: Task Completion [FAIL]
+============================================================
+[USER]: done!!
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄
+
+============================================================
+SCENARIO: Check-in Acceptance [FAIL]
+============================================================
+[USER]: yes please set that timer
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄
+
+============================================================
+SCENARIO: Memory Deletion [FAIL]
+============================================================
+[USER]: forget that actually
+
+[ASSISTANT]: Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄

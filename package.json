@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "ai-test": "node focusflow-ai-tests/tests/runTests.js",
+    "ai-test:random": "node focusflow-ai-tests/tests/runTests.js --random",
+    "ai-test:long": "node focusflow-ai-tests/tests/runTests.js --long"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",

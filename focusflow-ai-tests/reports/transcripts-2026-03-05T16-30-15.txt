@@ -1,0 +1,59 @@
+FocusFlow AI Test Transcripts — 3/5/2026, 10:00:15 PM
+
+============================================================
+SCENARIO: Memory Capture [PASS]
+============================================================
+[USER]: remember to call mom
+
+[ASSISTANT]: **Got it**: call mom is saved.
+
+============================================================
+SCENARIO: Reminder Creation [PASS]
+============================================================
+[USER]: remind me to send the email in 10 minutes
+
+[ASSISTANT]: Reminder set: "send the email" at **10:09 PM**.
+
+============================================================
+SCENARIO: Reminder Reschedule [PASS]
+============================================================
+[USER]: actually push that back 30 minutes
+
+[ASSISTANT]: Reminder updated: "send the email" at **10:29 doesn't match new time**: Reminder updated to "send the email" at **10:39 PM**.
+
+============================================================
+SCENARIO: Memory Recall [FAIL]
+============================================================
+[USER]: wait what was I supposed to do again? what do you remember?
+
+[ASSISTANT]: You've told me:
+* Call mom
+* Send an email (reminder set for **10:39 PM**)
+
+============================================================
+SCENARIO: Task Decomposition [PASS]
+============================================================
+[USER]: I'm so overwhelmed with this project, I don't even know where to start
+
+[ASSISTANT]: **Let's start small**: Open a blank document and type one sentence about what the project is about. Want me to check in with you in 25 minutes?
+
+============================================================
+SCENARIO: Task Completion [FAIL]
+============================================================
+[USER]: done!!
+
+[ASSISTANT]: **Progress**: You've made a start. One option is to break down the project into smaller tasks. Want to try that?
+
+============================================================
+SCENARIO: Check-in Acceptance [FAIL]
+============================================================
+[USER]: yes please set that timer
+
+[ASSISTANT]: **Next step**: Write down 3 smaller tasks related to the project. Want me to check in with you in 25 minutes?
+
+============================================================
+SCENARIO: Memory Deletion [PASS]
+============================================================
+[USER]: forget that actually
+
+[ASSISTANT]: Forgot the task breakdown. No problem at all.

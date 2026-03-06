@@ -284,7 +284,7 @@ export async function POST(request) {
                         mode,
                         userName: displayName,
                         memoryItems: memoryItemsForLLM,
-                        userMessage,
+                        userMessage: message,
                         remindAt,
                         onToken: (token) => {
                             const data = `data: ${JSON.stringify({ token })}\n\n`;
@@ -325,7 +325,7 @@ export async function POST(request) {
         });
     } catch (error) {
         console.error('Chat API error:', error);
-        return new Response(JSON.stringify({ error: 'Internal server error' }), {
+        return new Response(JSON.stringify({ error: error.message, stack: error.stack }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
         });

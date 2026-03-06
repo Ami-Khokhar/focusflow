@@ -1,0 +1,83 @@
+{
+  "label": "FocusFlow Deterministic Suite",
+  "startTime": "2026-03-05T16:36:57.791Z",
+  "endTime": "2026-03-05T16:37:05.936Z",
+  "durationMs": 8145,
+  "scenarios": [
+    {
+      "name": "Memory Capture",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 0
+    },
+    {
+      "name": "Reminder Creation",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 1
+    },
+    {
+      "name": "Reminder Reschedule",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 2
+    },
+    {
+      "name": "Memory Recall",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 3
+    },
+    {
+      "name": "Task Decomposition",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 1
+    },
+    {
+      "name": "Task Completion",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 1
+    },
+    {
+      "name": "Check-in Acceptance",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 1
+    },
+    {
+      "name": "Memory Deletion",
+      "status": "ERROR",
+      "reason": "getLatestReminder is not defined",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 0
+    }
+  ],
+  "passCount": 0,
+  "failCount": 0,
+  "errorCount": 8
+}

@@ -1,0 +1,59 @@
+FocusFlow AI Test Transcripts — 3/5/2026, 10:17:33 PM
+
+============================================================
+SCENARIO: Memory Capture [PASS]
+============================================================
+[USER]: remember to call mom
+
+[ASSISTANT]: **Got it**: call mom is saved.
+
+============================================================
+SCENARIO: Reminder Creation [PASS]
+============================================================
+[USER]: remind me to send the email in 10 minutes
+
+[ASSISTANT]: Reminder set: "send the email" at **10:27 PM**.
+
+============================================================
+SCENARIO: Reminder Reschedule [FAIL]
+============================================================
+[USER]: actually push that back 30 minutes
+
+[ASSISTANT]: Reminder updated: "send the email" at **10:57 PM**.
+
+============================================================
+SCENARIO: Memory Recall [FAIL]
+============================================================
+[USER]: wait what was I supposed to do again? what do you remember?
+
+[ASSISTANT]: You've shared:
+* Call mom
+* Send an email (reminder set for **10:57 PM**)
+
+============================================================
+SCENARIO: Task Decomposition [PASS]
+============================================================
+[USER]: I'm so overwhelmed with this project, I don't even know where to start
+
+[ASSISTANT]: Open a blank document and type one sentence about what the project is about. Want me to check in with you in 25 minutes?
+
+============================================================
+SCENARIO: Task Completion [FAIL]
+============================================================
+[USER]: done!!
+
+[ASSISTANT]: **Progress made**. One option is to break down the project into smaller tasks. Want to try that?
+
+============================================================
+SCENARIO: Check-in Acceptance [PASS]
+============================================================
+[USER]: yes please set that timer
+
+[ASSISTANT]: **Timer set**. I'll be quiet until then. Go ahead and focus!
+
+============================================================
+SCENARIO: Memory Deletion [PASS]
+============================================================
+[USER]: forget that actually
+
+[ASSISTANT]: The project task is removed. No problem at all.

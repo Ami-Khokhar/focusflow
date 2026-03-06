@@ -1,0 +1,195 @@
+{
+  "label": "FocusFlow Deterministic Suite",
+  "startTime": "2026-03-05T16:18:48.908Z",
+  "endTime": "2026-03-05T16:19:05.972Z",
+  "durationMs": 17064,
+  "scenarios": [
+    {
+      "name": "Memory Capture",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": false,
+        "description": "Memory capture created correctly.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "remember to call mom"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 1892
+    },
+    {
+      "name": "Reminder Creation",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": false,
+        "description": "Reminder created with correct time.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "remind me to send the email in 10 minutes"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 1257
+    },
+    {
+      "name": "Reminder Reschedule",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": false,
+        "description": "Reminder rescheduled to correct time.",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "actually push that back 30 minutes"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 1307
+    },
+    {
+      "name": "Memory Recall",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": true,
+        "description": "Memory recall response is missing item(s): finish the project report, call dentist",
+        "reproSteps": "Send \"what do you remember?\" and compare response against memory_items in DB.",
+        "suggestedFix": "Check getMemoryItems() query in lib/db.js and ensure the memory_recall system prompt includes all items."
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "wait what was I supposed to do again? what do you remember?"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 962
+    },
+    {
+      "name": "Task Decomposition",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": true,
+        "description": "Decomposition response did not offer a focus session / check-in timer.",
+        "reproSteps": "Send an overwhelmed message and check if response mentions \"25 minutes\" or \"focus\" or \"check in\".",
+        "suggestedFix": "Update the decomposition system prompt in lib/prompts.js to always offer a 25-minute focus session."
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "I'm so overwhelmed with this project, I don't even know where to start"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 883
+    },
+    {
+      "name": "Task Completion",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": true,
+        "description": "Task \"finish the project report\" exists but status was not updated to 'Done'.",
+        "reproSteps": "Send \"done!\" after a task is active. Check memory_items.status.",
+        "suggestedFix": "Check markMemoryItemDone() in lib/db.js and the task_complete handler in route.js."
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "done!!"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 889
+    },
+    {
+      "name": "Check-in Acceptance",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": true,
+        "description": "check_in_due_at is null after check-in acceptance.",
+        "reproSteps": "Send \"yes please\" when prompted for a focus session check-in. Inspect sessions.check_in_due_at.",
+        "suggestedFix": "Check the isCheckInAcceptance block in route.js — updateSession() should set check_in_due_at to now+25min."
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "yes please set that timer"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 881
+    },
+    {
+      "name": "Memory Deletion",
+      "status": "FAIL",
+      "reason": "Response does not appear empathetic (heuristic check).",
+      "suggestedFix": "Review system prompt in lib/prompts.js to strengthen empathetic tone.",
+      "bug": {
+        "bugFound": false,
+        "description": "Item correctly soft-deleted (Archived).",
+        "reproSteps": "",
+        "suggestedFix": ""
+      },
+      "transcript": [
+        {
+          "role": "user",
+          "content": "forget that actually"
+        },
+        {
+          "role": "assistant",
+          "content": "Hmm, I hit a small snag connecting to my brain. That happens sometimes! Want to try again? I'm here. 🔄"
+        }
+      ],
+      "durationMs": 998
+    }
+  ],
+  "passCount": 0,
+  "failCount": 8,
+  "errorCount": 0
+}

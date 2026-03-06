@@ -1,0 +1,59 @@
+FocusFlow AI Test Transcripts — 3/5/2026, 9:55:19 PM
+
+============================================================
+SCENARIO: Memory Capture [PASS]
+============================================================
+[USER]: remember to call mom
+
+[ASSISTANT]: **Got it**, "call mom" is saved.
+
+============================================================
+SCENARIO: Reminder Creation [FAIL]
+============================================================
+[USER]: remind me to send the email in 10 minutes
+
+[ASSISTANT]: Reminder set: "send the email" at **10:05 PM**.
+
+============================================================
+SCENARIO: Reminder Reschedule [FAIL]
+============================================================
+[USER]: actually push that back 30 minutes
+
+[ASSISTANT]: Updated reminder: "send the email" at **10:35 PM**.
+
+============================================================
+SCENARIO: Memory Recall [FAIL]
+============================================================
+[USER]: wait what was I supposed to do again? what do you remember?
+
+[ASSISTANT]: You've told me:
+* Call mom
+* Send an email (reminder set for **10:35 PM**)
+
+============================================================
+SCENARIO: Task Decomposition [FAIL]
+============================================================
+[USER]: I'm so overwhelmed with this project, I don't even know where to start
+
+[ASSISTANT]: What's one specific part of the project that's feeling most overwhelming?
+
+============================================================
+SCENARIO: Task Completion [FAIL]
+============================================================
+[USER]: done!!
+
+[ASSISTANT]: **Congratulations**. Want to take a moment to review what's next or call it a night?
+
+============================================================
+SCENARIO: Check-in Acceptance [FAIL]
+============================================================
+[USER]: yes please set that timer
+
+[ASSISTANT]: Want me to check in with you in **25 minutes**?
+
+============================================================
+SCENARIO: Memory Deletion [FAIL]
+============================================================
+[USER]: forget that actually
+
+[ASSISTANT]: Forgot the timer.

@@ -1,0 +1,83 @@
+{
+  "label": "FocusFlow Deterministic Suite",
+  "startTime": "2026-03-05T15:57:34.489Z",
+  "endTime": "2026-03-05T15:57:48.941Z",
+  "durationMs": 14452,
+  "scenarios": [
+    {
+      "name": "Memory Capture",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 1272
+    },
+    {
+      "name": "Reminder Creation",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 960
+    },
+    {
+      "name": "Reminder Reschedule",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 1010
+    },
+    {
+      "name": "Memory Recall",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 753
+    },
+    {
+      "name": "Task Decomposition",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 728
+    },
+    {
+      "name": "Task Completion",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 674
+    },
+    {
+      "name": "Check-in Acceptance",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 623
+    },
+    {
+      "name": "Memory Deletion",
+      "status": "ERROR",
+      "reason": "HTTP 500: {\"error\":\"Internal server error\"}",
+      "suggestedFix": "Check the server logs and ensure /api/chat is reachable.",
+      "bug": null,
+      "transcript": [],
+      "durationMs": 771
+    }
+  ],
+  "passCount": 0,
+  "failCount": 0,
+  "errorCount": 8
+}
