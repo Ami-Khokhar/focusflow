@@ -1,11 +1,20 @@
 // POST /api/telegram — Telegram webhook endpoint
-// Telegram sends updates here instead of the bot polling for them.
+// Returns 200 immediately to prevent Telegram retries,
+// then processes the update in the background via waitUntil().
 
 import { createBot } from '@/lib/telegram/bot';
 
+let waitUntil;
+try {
+    const mod = await import('@vercel/functions');
+    waitUntil = mod.waitUntil;
+} catch {
+    // Local dev fallback — no waitUntil available
+    waitUntil = null;
+}
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -38,7 +47,18 @@ export async function POST(request) {
     try {
         const update = await request.json();
         const b = await getBot();
-        await b.handleUpdate(update);
+
+        const processUpdate = b.handleUpdate(update).catch((err) => {
+            console.error('[Telegram Webhook] Background error:', err.message);
+        });
+
+        if (waitUntil) {
+            // Vercel: return 200 immediately, process in background
+            waitUntil(processUpdate);
+        } else {
+            // Local dev: await directly
+            await processUpdate;
+        }
     } catch (err) {
         console.error('[Telegram Webhook] Error:', err.message);
     }
