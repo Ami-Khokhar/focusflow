@@ -4,17 +4,20 @@
 import { createBot } from '@/lib/telegram/bot';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
 let bot = null;
+let initPromise = null;
 
-function getBot() {
+async function getBot() {
     if (!bot && token) {
         bot = createBot(token);
-        bot.init();
+        initPromise = bot.init();
     }
+    if (initPromise) await initPromise;
     return bot;
 }
 
@@ -34,7 +37,7 @@ export async function POST(request) {
 
     try {
         const update = await request.json();
-        const b = getBot();
+        const b = await getBot();
         await b.handleUpdate(update);
     } catch (err) {
         console.error('[Telegram Webhook] Error:', err.message);
