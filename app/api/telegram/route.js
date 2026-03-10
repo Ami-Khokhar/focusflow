@@ -2,20 +2,20 @@
 // Telegram sends updates here instead of the bot polling for them.
 
 import { createBot } from '@/lib/telegram/bot';
-import { webhookCallback } from 'grammy';
 
 export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
-let handler = null;
+let bot = null;
 
-function getHandler() {
-    if (!handler && token) {
-        const bot = createBot(token);
-        handler = webhookCallback(bot, 'std/http');
+function getBot() {
+    if (!bot && token) {
+        bot = createBot(token);
+        bot.init();
     }
-    return handler;
+    return bot;
 }
 
 export async function POST(request) {
@@ -33,13 +33,15 @@ export async function POST(request) {
     }
 
     try {
-        const cb = getHandler();
-        return await cb(request);
+        const update = await request.json();
+        const b = getBot();
+        await b.handleUpdate(update);
     } catch (err) {
         console.error('[Telegram Webhook] Error:', err.message);
-        // Always return 200 to Telegram to prevent retries
-        return Response.json({ ok: true });
     }
+
+    // Always return 200 to Telegram to prevent retries
+    return Response.json({ ok: true });
 }
 
 // GET endpoint for health checks
