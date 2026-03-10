@@ -1,5 +1,4 @@
--- FocusFlow RLS Migration
--- FocusFlow does NOT use Supabase Auth — user IDs are app-managed UUIDs stored in localStorage.
+-- Flowy Migration: 001_enable_rls.sqlow does NOT use Supabase Auth — user IDs are app-managed UUIDs stored in localStorage.
 -- Strategy: enable RLS on all tables, deny writes via anon key, allow SELECT for Realtime.
 -- All write operations go through server-side API routes using the service_role key (bypasses RLS).
 

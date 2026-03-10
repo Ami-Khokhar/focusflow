@@ -53,8 +53,7 @@ export async function GET(request) {
                         await webpush.sendNotification(
                             { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
                             JSON.stringify({
-                                title: 'FocusFlow Reminder',
-                                body: reminder.content,
+                                body: `Hey! Flowy here. You asked me to remind you about: ${reminder.content}`,
                                 url: '/chat',
                             })
                         );

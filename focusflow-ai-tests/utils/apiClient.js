@@ -32,7 +32,7 @@ export async function sendMessage({
     timezone = 'Asia/Kolkata',
     mode,
     clientHistory = [],
-    timeoutMs = 30000,
+    timeoutMs = 60000,
 }) {
     const start = Date.now();
     const url = new URL('/api/chat', baseUrl);
@@ -51,17 +51,27 @@ export async function sendMessage({
         const lib = url.protocol === 'https:' ? https : http;
         const timeout = setTimeout(() => reject(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
 
+        const headers = {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            Accept: 'text/event-stream',
+        };
+
+        // Add test token if in test mode
+        if (process.env.TEST_MODE === 'true' && process.env.TEST_TOKEN) {
+            headers['Authorization'] = `Bearer ${process.env.TEST_TOKEN}`;
+            console.log('[apiClient] Using test token:', process.env.TEST_TOKEN);
+        } else {
+            console.log('[apiClient] Not using test token - TEST_MODE:', process.env.TEST_MODE, 'TEST_TOKEN:', process.env.TEST_TOKEN);
+        }
+
         const req = lib.request(
             {
                 hostname: url.hostname,
                 port: url.port || (url.protocol === 'https:' ? 443 : 80),
                 path: url.pathname,
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(body),
-                    Accept: 'text/event-stream',
-                },
+                headers,
             },
             (res) => {
                 if (res.statusCode !== 200) {

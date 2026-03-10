@@ -1,4 +1,5 @@
 # FocusFlow — Product Requirements Document
+
 **MVP · Chatbot Interface · Version 1.0 · Confidential · 2026**
 
 ---
@@ -13,7 +14,7 @@ FocusFlow is an AI-powered personal agent designed for adults with ADHD. The MVP
 
 | Field | Value |
 |---|---|
-| Product Name | FocusFlow MVP |
+| Product Name | Flowy MVP |
 | Document Type | Product Requirements Document (PRD) |
 | Version | 1.0 |
 | Target Release | Month 1–2 of Roadmap |

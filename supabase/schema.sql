@@ -1,4 +1,4 @@
--- FocusFlow MVP — Supabase Schema
+-- Flowy — Supabase Schema
 -- Run this in the Supabase SQL editor when ready to move off demo mode
 
 -- Enable UUID extension

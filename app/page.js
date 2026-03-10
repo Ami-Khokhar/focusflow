@@ -1,85 +1,90 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LandingPage() {
-    const router = useRouter();
     const [loading, setLoading] = useState(false);
+    const router = useRouter();
 
-    async function handleStart() {
+    useEffect(() => {
+        fetch('/api/user/me').then(res => {
+            if (res.ok) router.push('/chat');
+        }).catch(() => {});
+    }, [router]);
+
+    async function handleLogin(provider) {
         setLoading(true);
         try {
-            // Reuse existing user if already stored
-            const existingId = localStorage.getItem('focusflow_user_id');
-            if (existingId && existingId !== '00000000-0000-0000-0000-000000000001') {
-                router.push('/chat');
-                return;
-            }
-
-            // Create a new persistent user
-            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-            const res = await fetch('/api/user', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ displayName: 'Friend', timezone }),
+            const { createBrowserClient } = await import('@supabase/ssr');
+            const client = createBrowserClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+            );
+            await client.auth.signInWithOAuth({
+                provider,
+                options: {
+                    redirectTo: `${window.location.origin}/auth/callback`,
+                },
             });
-            const user = await res.json();
-            localStorage.setItem('focusflow_user_id', user.id);
-            localStorage.setItem('focusflow_user_name', user.display_name || 'Friend');
-            router.push('/chat');
         } catch {
-            // Fallback: use demo ID if API fails
-            localStorage.setItem('focusflow_user_id', '00000000-0000-0000-0000-000000000001');
-            localStorage.setItem('focusflow_user_name', 'Friend');
-            router.push('/chat');
+            setLoading(false);
         }
     }
 
     return (
-        <main className="landing">
-            <div className="landing-logo">🧠</div>
-            <h1>FocusFlow</h1>
-            <p className="tagline">
-                Your shame-free AI companion for ADHD. Start tasks, stay on track, and
-                remember what matters — without pressure.
-            </p>
+        <main className="landing-container">
+            {/* Soft background glow */}
+            <div className="landing-glow" />
 
-            <div className="features">
-                <div className="feature-card">
-                    <div className="icon">🌅</div>
-                    <h3>Morning Briefing</h3>
-                    <p>3 priorities to start your day, no overwhelming lists</p>
+            <section className="hero">
+                <div className="header-meta">Flowy v1.0</div>
+                <div className="landing-logo-container">
+                    <img src="/logo.png" alt="Flowy Logo" className="landing-logo-large" />
                 </div>
-                <div className="feature-card">
-                    <div className="icon">🧩</div>
-                    <h3>Task Breakdown</h3>
-                    <p>Stuck? Get one tiny, doable first step</p>
+                <h1 className="hero-title">Peace of mind for the <span className="text-accent">neurodivergent</span> mind.</h1>
+                <p className="hero-subtitle">
+                    Flowy is a shame-free AI companion designed for adults with ADHD.
+                    Start tasks with ease, capture memories instantly, and navigate your day without the pressure of typical productivity tools.
+                </p>
+                <div className="auth-buttons" style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
+                    <button className="btn-primary-large" onClick={() => handleLogin('google')} disabled={loading}>
+                        {loading ? 'Redirecting...' : '🌐 Continue with Google'}
+                    </button>
                 </div>
-                <div className="feature-card">
-                    <div className="icon">🧠</div>
-                    <h3>Memory Capture</h3>
-                    <p>Dump anything — it remembers so you don't have to</p>
-                </div>
-                <div className="feature-card">
-                    <div className="icon">💛</div>
-                    <h3>Gentle Check-ins</h3>
-                    <p>No guilt, no shame. Reschedule anytime.</p>
-                </div>
-            </div>
+            </section>
 
-            <button className="btn-primary" onClick={handleStart} disabled={loading}>
-                {loading ? 'Starting...' : '✨ Get Started'}
-            </button>
+            <section className="features-grid">
+                <div className="feature-card">
+                    <div className="feature-icon">🌅</div>
+                    <h3 className="feature-title">Golden Hour Briefing</h3>
+                    <p className="feature-text">Start with three essential focal points. No scrolling, no noise — pure clarity.</p>
+                </div>
+                <div className="feature-card">
+                    <div className="feature-icon">🧩</div>
+                    <h3 className="feature-title">Tiny First Steps</h3>
+                    <p className="feature-text">Paralyzed by a big task? We break it down into a single, two-minute action.</p>
+                </div>
+                <div className="feature-card">
+                    <div className="feature-icon">🔍</div>
+                    <h3 className="feature-title">Thought Capture</h3>
+                    <p className="feature-text">A safe space to offload ideas and reminders. We hold them so you can breathe.</p>
+                </div>
+                <div className="feature-card">
+                    <div className="feature-icon">💛</div>
+                    <h3 className="feature-title">Kind Boundaries</h3>
+                    <p className="feature-text">Gentle check-ins that respect your energy. No guilt trips, just support.</p>
+                </div>
+            </section>
 
-            <p className="privacy-note">
-                Your conversations stay private. No data is shared with third parties or
-                used to train AI models. Read our{' '}
-                <a href="#" style={{ color: 'var(--accent)' }}>
-                    privacy policy
-                </a>
-                .
-            </p>
+            <footer className="landing-footer">
+                <p className="privacy-badge">🔒 Your data is private and never used for training.</p>
+                <div className="footer-links">
+                    <a href="#">Privacy</a>
+                    <a href="#">Ethics</a>
+                    <a href="#">Contact</a>
+                </div>
+            </footer>
         </main>
     );
 }

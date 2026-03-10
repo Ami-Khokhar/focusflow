@@ -1,68 +1,51 @@
-// GET /api/reminders — check for due reminders and check-ins
-// Also sends Web Push notifications to all subscribed devices for this user.
-import webpush from 'web-push';
-import {
-    getDueReminders,
-    markReminderSurfaced,
-    consumeDueCheckIn,
-    getPushSubscriptions,
-    deletePushSubscription,
-} from '@/lib/db';
-
-// Configure VAPID for Web Push
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    webpush.setVapidDetails(
-        `mailto:${process.env.VAPID_EMAIL || 'noreply@focusflow.app'}`,
-        process.env.VAPID_PUBLIC_KEY,
-        process.env.VAPID_PRIVATE_KEY,
-    );
-}
+import { getDueReminders, consumeDueCheckIn, markReminderSurfaced } from '@/lib/db';
+import { createSupabaseServerClient, supabaseAdmin, isDemoMode } from '@/lib/supabase';
 
 export async function GET(request) {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
+    try {
+        const { searchParams } = new URL(request.url);
 
-    if (!userId) {
-        return Response.json({ error: 'Missing userId' }, { status: 400 });
-    }
+        let userId;
+        if (isDemoMode) {
+            userId = searchParams.get('userId');
+            if (!userId) {
+                return new Response(JSON.stringify({ error: 'Missing userId' }), {
+                    status: 400,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+        } else {
+            const supabase = createSupabaseServerClient(request);
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+            const { data: appUser, error } = await supabaseAdmin
+                .from('users').select('id').eq('auth_user_id', user.id).maybeSingle();
+            if (error || !appUser) return new Response(JSON.stringify({ error: 'User not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+            userId = appUser.id;
+        }
 
-    // Check for due reminders
-    const dueReminders = await getDueReminders(userId);
-
-    // Mark each as surfaced so they don't fire again
-    for (const reminder of dueReminders) {
-        await markReminderSurfaced(userId, reminder.id);
-    }
-
-    // Send Web Push for each due reminder to all of this user's subscribed devices
-    if (dueReminders.length > 0 && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-        const subs = await getPushSubscriptions(userId);
-        for (const reminder of dueReminders) {
-            for (const sub of subs) {
-                try {
-                    await webpush.sendNotification(
-                        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-                        JSON.stringify({
-                            title: 'FocusFlow Reminder',
-                            body: reminder.content,
-                            url: '/chat',
-                        })
-                    );
-                } catch (err) {
-                    if (err.statusCode === 410) {
-                        await deletePushSubscription(sub.endpoint);
-                    }
-                }
+        const dueReminders = await getDueReminders(userId);
+        if (dueReminders.length > 0) {
+            console.log(`[Reminders] Found ${dueReminders.length} due:`, dueReminders.map(r => ({ id: r.id, content: r.content, remind_at: r.remind_at })));
+            // Mark as surfaced so they don't return on the next poll
+            for (const r of dueReminders) {
+                await markReminderSurfaced(userId, r.id);
             }
         }
+        const checkInResult = await consumeDueCheckIn(userId);
+
+        return new Response(JSON.stringify({
+            reminders: dueReminders,
+            checkInDue: !!checkInResult,
+            checkInDueAt: checkInResult?.dueAt || null
+        }), {
+            headers: { 'Content-Type': 'application/json' },
+        });
+    } catch (error) {
+        console.error('Reminders API error:', error);
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+        });
     }
-
-    // Consume due check-in once so polling/visibility races cannot retrigger it.
-    const checkInResult = await consumeDueCheckIn(userId);
-
-    return Response.json({
-        reminders: dueReminders,
-        checkInDue: checkInResult.consumed,
-        checkInDueAt: checkInResult.dueAt,
-    });
 }

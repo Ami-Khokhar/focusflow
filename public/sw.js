@@ -1,4 +1,4 @@
-// FocusFlow Service Worker — handles background push notifications
+// Flowy Notification Service Worker — handles background push notifications
 
 self.addEventListener('push', (event) => {
     const data = event.data?.json() ?? {};
