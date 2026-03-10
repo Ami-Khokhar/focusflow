@@ -1,4 +1,4 @@
-# FocusFlow MVP — TODO List
+# Flowy MVP Development Roadmap
 >
 > Generated from PRD v1.0 + SRS v1.0 · Target: Week 1–8 Beta Launch
 

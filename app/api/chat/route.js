@@ -1,226 +1,85 @@
-// POST /api/chat — streaming chat endpoint
-import { buildSystemPrompt, detectIntent, detectCheckInAcceptance, classifyIntentWithLLM } from '@/lib/prompts';
-import { streamChatResponse } from '@/lib/llm';
-import { parseRemindTime, parseTimeOffset } from '@/lib/timeParser';
+// POST /api/chat — streaming chat endpoint (LangChain tool-calling agent)
+import { buildSystemPrompt } from '@/lib/langchain/prompts';
+import { createModel, convertHistory } from '@/lib/langchain/agent';
+import { createTools } from '@/lib/langchain/tools';
+import { streamAgentResponse, streamDemoResponse } from '@/lib/langchain/streaming';
+import { createSupabaseServerClient, supabaseAdmin, isDemoMode } from '@/lib/supabase';
 import {
     getMessages,
     saveMessage,
-    saveMemoryItem,
-    deleteLastMemoryItem,
-    deleteMemoryItemByContent,
     getMemoryItems,
     updateSession,
     getOrCreateSession,
-    rescheduleLastReminder,
     getTodayBriefing,
     saveTodayBriefing,
     getRecentMessages,
     getUser,
-    updateUser,
-    markMemoryItemDone,
-    findMemoryItemByContent,
-    getLatestActiveTask,
 } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
 export async function POST(request) {
     try {
-        const { message, sessionId, userId, userName, mode: requestMode, timezone, clientHistory, content } = await request.json();
+        const body = await request.json();
+        const { message, sessionId, userName, mode: requestMode, timezone, clientHistory, content } = body;
+        let userId = body.userId;
 
-        if (!sessionId || !userId) {
-            return new Response(JSON.stringify({ error: 'Missing sessionId or userId' }), {
-                status: 400,
-                headers: { 'Content-Type': 'application/json' },
-            });
+        // ── Auth ──────────────────────────────────────────────
+        const isTestMode = process.env.TEST_MODE === 'true' &&
+            request.headers.get('authorization') === `Bearer ${process.env.TEST_TOKEN}`;
+
+        if (!isDemoMode && !isTestMode) {
+            const supabase = createSupabaseServerClient(request);
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+            const { data: appUser, error } = await supabaseAdmin
+                .from('users').select('id').eq('auth_user_id', user.id).maybeSingle();
+            if (error || !appUser) return Response.json({ error: 'User not found' }, { status: 404 });
+            userId = appUser.id;
         }
 
-        // Determine the mode
-        let mode = requestMode || 'chat';
-        let userMessage = message;
-        let remindAt = null;
+        if (!sessionId || !userId) return Response.json({ error: 'Missing sessionId or userId' }, { status: 400 });
 
-        // ── Onboarding flow ──────────────────────────────────
-        // Check if user still needs onboarding (step 0–2).
-        // Step 0 + mode='onboarding' → send Q1 (no answer to process yet)
-        // Step 1+ + mode='chat'     → user is answering the previous question
+        // ── Proactive save (fire-and-forget, no LLM needed) ───
+        if (requestMode === 'proactive_save') {
+            if (content && typeof content === 'string' && content.length <= 5000) {
+                await saveMessage(sessionId, 'assistant', content);
+            }
+            return Response.json({ ok: true });
+        }
+
+        // ── Load user + session state ─────────────────────────
         const user = await getUser(userId);
-        const onboardingStep = user?.onboarding_step ?? 3; // default 3 = complete
+        const currentSession = await getOrCreateSession(userId);
+        const userTimezone = timezone || user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const now = new Date();
+        const currentTime = now.toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: userTimezone
+        }) + ', ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone });
 
-        if (onboardingStep < 3) {
-            if (mode === 'onboarding' && onboardingStep === 0) {
-                // Initial trigger — just ask Q1, no user answer to save
-                mode = 'onboarding_q1';
-            } else if (mode === 'chat') {
-                // User is answering an onboarding question
-                await saveMessage(sessionId, 'user', message);
-
-                if (onboardingStep === 0) {
-                    // Answer to Q1: save their name
-                    const name = message.trim().replace(/^(i'm |my name is |call me |it's |i am )/i, '').replace(/[.!]+$/, '').trim();
-                    await updateUser(userId, { display_name: name, onboarding_step: 1 });
-                    mode = 'onboarding_q2';
-                } else if (onboardingStep === 1) {
-                    // Answer to Q2: save main focus
-                    await updateUser(userId, { main_focus: message.trim(), onboarding_step: 2 });
-                    mode = 'onboarding_q3';
-                } else if (onboardingStep === 2) {
-                    // Answer to Q3: save biggest struggle, mark onboarding complete
-                    await updateUser(userId, { biggest_struggle: message.trim(), onboarding_step: 3 });
-                    mode = 'onboarding_done';
-                }
-            }
-        }
-
-        // For normal chat messages, detect intent
-        if (mode === 'chat' && message !== '__MORNING_BRIEFING__' && message !== '__ONBOARDING__') {
-            // Save user message before intent detection (history is used for check-in context)
-            await saveMessage(sessionId, 'user', message);
-
-            // LLM is the primary classifier; regex is the fallback for demo mode / API failure
-            let intent = null;
-
-            // Guard: short acknowledgments must never be misclassified as memory_capture
-            // or reminder_reschedule — they are always general conversation.
-            const isAcknowledgment = /^(ok|okay|sure|thanks|thank you|got it|will do|sounds good|great|perfect|nice|cool|yep|yeah|yes|alright|noted|understood|k|kk)[\s.!,?]*$/i.test(message.trim());
-
-            if (!isAcknowledgment) {
-                intent = detectIntent(message);
-                // Regex is confident for clear patterns; use LLM only for ambiguous messages
-                if (intent === 'general') {
-                    const classifierKey = process.env.GROQ_API_KEY_2 || process.env.GROQ_API_KEY;
-                    const llmIntent = await classifyIntentWithLLM(message, classifierKey, clientHistory || []);
-                    if (llmIntent) intent = llmIntent;
-                }
-            }
-
-            if (intent !== 'general') {
-                mode = intent;
-            }
-        }
-
-        // Get memory items for context
+        const hasActiveCheckIn = !!(currentSession.check_in_due_at && new Date(currentSession.check_in_due_at) > now);
         const memoryItems = await getMemoryItems(userId);
-        // Hide pending timed reminders from the LLM — they are delivered by the system,
-        // not by the LLM. Showing them causes the LLM to narrate countdowns and statuses.
-        const memoryItemsForLLM = memoryItems.filter(
-            (i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at)
-        );
+        // Deduplicate by normalized content (keep most recent) and cap at 15 items
+        const _normKey = (s) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+        const _seen = new Set();
+        const memoryItemsForContext = memoryItems
+            .filter((i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at))
+            .filter((i) => { const k = _normKey(i.content); if (_seen.has(k)) return false; _seen.add(k); return true; })
+            .slice(0, 15);
 
-        // Handle memory capture (with time parsing)
-        if (mode === 'memory_capture') {
-            // Extract the thing to remember — capture what comes AFTER the trigger phrase
-            // (simple .replace() leaves any text before the trigger, e.g. "no, remind me to X" → "no, X")
-            const triggerMatch = message.match(
-                /(?:remind me(?:\s+(?:to|about))?|i\s+(?:need|want)\s+to\s+remember|remember\s+(?:this|that|these|to|the following)?:?\s*|note\s+(?:this|that|down)?:?\s*|save\s+(?:this|that)?:?\s*|don't\s+let\s+me\s+forget\s+(?:to|about)?|keep\s+(?:a\s+)?(?:note|track)\s+of)\s*([\s\S]+)/i
-            );
-            let content = triggerMatch ? triggerMatch[1].trim() : message.trim();
-            // Strip residual list-style prefixes (e.g. "these:" or "the following:")
-            content = content.replace(/^(these|the following)\s*:\s*/i, '').trim();
+        // ── Detect special modes from session state ───────────
+        let modeContext = '';
+        let isBriefing = false;
+        let isCheckIn = false;
+        let isOnboarding = (user?.onboarding_step ?? 3) < 3;
 
-            // Parse time expression from the content
-            const parsed = parseRemindTime(content);
-            content = parsed.content;
-            remindAt = parsed.remindAt;
-
-            if (content) {
-                // Multi-item capture for dump-style messages.
-                // Supports commas, semicolons, new lines, and list joins with "and".
-                const isLikelyListDump = /(?:\bthese\b|\bfollowing\b|[,;\n]|\band\b)/i.test(message);
-                const normalizedListText = isLikelyListDump
-                    ? content
-                        .replace(/\s+(?:and|then)\s+/gi, ', ')
-                        .replace(/[;\n]+/g, ',')
-                    : content;
-                const items = isLikelyListDump
-                    ? normalizedListText.split(/,\s*/).map((s) => s.trim()).filter(Boolean)
-                    : [content];
-
-                for (const item of items) {
-                    // Auto-categorize each item individually
-                    let category = 'Note';
-                    const lowerItem = item.toLowerCase();
-                    if (remindAt && items.length === 1) {
-                        category = 'Reminder';
-                    } else if (/call |email |submit |finish |complete |do |make |write |send |buy |get /i.test(lowerItem)) {
-                        category = 'Task';
-                    } else if (/remind|reminder|appointment|meeting/i.test(lowerItem)) {
-                        category = 'Reminder';
-                    } else if (/http|www\.|\.com|\.org|\.io/i.test(lowerItem)) {
-                        category = 'Link';
-                    } else if (/idea|what if|maybe|could/i.test(lowerItem)) {
-                        category = 'Idea';
-                    }
-
-                    await saveMemoryItem(userId, item, category, (items.length === 1 ? remindAt : null));
-                }
-                userMessage = items.length > 1 ? items.join(', ') : content;
-
-                // If a time was parsed (single item), switch to reminder_set mode for confirmation
-                if (remindAt && items.length === 1) {
-                    mode = 'reminder_set';
-                }
-            }
-        }
-
-        // Handle memory delete (targeted when possible, fallback only for generic delete)
-        if (mode === 'memory_delete') {
-            const targetMatch = message.match(/(?:forget|delete|remove|undo)\s+(?:that|this|the)?\s*([\s\S]*)/i);
-            const rawTarget = (targetMatch?.[1] || '').trim();
-            const normalizedTarget = rawTarget
-                .replace(/^(item|thing|note|memory)\b/i, '')
-                .replace(/\b(please|actually|now)\b/gi, '')
-                .replace(/\b(item|thing|note|memory)\b$/i, '')
-                .replace(/[.!?,]+$/g, '')
-                .trim();
-
-            const hasSpecificTarget = normalizedTarget.length >= 4 && !/^(that|this|it|last|latest)$/i.test(normalizedTarget);
-            if (hasSpecificTarget) {
-                const deleted = await deleteMemoryItemByContent(userId, normalizedTarget);
-                if (deleted) {
-                    userMessage = deleted.content;
-                } else {
-                    // Don't silently delete the wrong item when a specific target wasn't found.
-                    mode = 'chat';
-                }
-            } else {
-                const deleted = await deleteLastMemoryItem(userId);
-                if (deleted) {
-                    userMessage = deleted.content;
-                }
-            }
-        }
-
-        // Handle task completion — find and mark the task done
-        if (mode === 'task_complete') {
-            const matchedTask = await findMemoryItemByContent(userId, message);
-            const task = matchedTask || await getLatestActiveTask(userId);
-            if (task) {
-                await markMemoryItemDone(userId, task.id);
-                userMessage = task.content;
-            }
-        }
-
-        // Handle reminder reschedule
-        if (mode === 'reminder_reschedule') {
-            const offsetMs = parseTimeOffset(message);
-            if (offsetMs) {
-                const newRemindAt = new Date(Date.now() + offsetMs).toISOString();
-                const updated = await rescheduleLastReminder(userId, newRemindAt);
-                if (updated) {
-                    userMessage = updated.content;
-                    remindAt = newRemindAt;
-                }
-            }
-            // Keep mode as 'reminder_reschedule' so the LLM uses the dedicated reschedule prompt
-        }
-
-        // Briefing: serve cached version if it exists (avoids regenerating every page refresh)
-        if (mode === 'briefing') {
+        if (message === '__MORNING_BRIEFING__' || requestMode === 'briefing') {
+            isBriefing = true;
             await updateSession(sessionId, { briefing_delivered: true });
+
+            // Serve cached briefing if available
             const cached = await getTodayBriefing(userId);
             if (cached) {
-                // Stream the cached briefing back token-by-token
                 const encoder = new TextEncoder();
                 const stream = new ReadableStream({
                     start(controller) {
@@ -233,150 +92,172 @@ export async function POST(request) {
                     headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' },
                 });
             }
-        }
 
-        // Handle check-in trigger — clear the timer so it doesn't re-fire
-        if (mode === 'check_in') {
+            // Filter to today-relevant items for briefing
+            const todayStr = now.toLocaleDateString('en-CA', { timeZone: userTimezone }); // YYYY-MM-DD
+            const briefingItems = memoryItemsForContext.filter((i) => {
+                // Tasks are always relevant (uncompleted work)
+                if (i.category === 'Task') return true;
+                // Reminders: only if remind_at or surfaced_at is today
+                if (i.category === 'Reminder') {
+                    const remindDay = i.remind_at ? new Date(i.remind_at).toLocaleDateString('en-CA', { timeZone: userTimezone }) : null;
+                    const surfacedDay = i.surfaced_at ? new Date(i.surfaced_at).toLocaleDateString('en-CA', { timeZone: userTimezone }) : null;
+                    return remindDay === todayStr || surfacedDay === todayStr;
+                }
+                // Notes/Ideas/Links: only if created today
+                const capturedDay = i.captured_at ? new Date(i.captured_at).toLocaleDateString('en-CA', { timeZone: userTimezone }) : null;
+                return capturedDay === todayStr;
+            }).slice(0, 5);
+            const itemsList = briefingItems.map((i) => `- [${i.category}] ${i.content}`).join('\n');
+            modeContext = `TASK: Deliver the user's daily briefing.
+1. Warm greeting using their name + time of day
+2. Mention the current date
+3. ${briefingItems.length > 0
+    ? `List the top 3 most important items as a markdown bullet list. Prioritize by urgency.\n${itemsList}`
+    : 'No saved tasks yet. Ask: "What is the most important thing you need to do today?"'}
+4. After the list, on a NEW LINE, ask if they want to start the first one
+Keep it brief and energizing.`;
+
+        } else if (requestMode === 'check_in') {
+            isCheckIn = true;
             await updateSession(sessionId, { check_in_due_at: null });
+            modeContext = `TASK: Deliver a gentle 25-minute check-in.
+- Be warm: "Hey! It's been about 25 minutes."
+- Ask how it's going — ONE question
+- Offer three paths: keep going, take a break, or try something different
+- If they didn't finish, respond with ACCEPTANCE, never disappointment
+- Keep it under 40 words`;
+
+        } else if (isOnboarding && (message === '__ONBOARDING__' || requestMode === 'onboarding')) {
+            modeContext = `TASK: You are greeting a brand new user for the very first time.
+Ask for their name warmly in 1-2 sentences. Don't list features yet.
+Example: "Hey! Welcome to Flowy. Before we dive in — what should I call you?"
+When they reply with their name, use the update_profile tool to save it, then ask what they most want help with.
+Continue naturally until you have their name, main focus, and biggest struggle — then give a warm personalized welcome.`;
+
+        } else if (isOnboarding) {
+            modeContext = `TASK: You are continuing onboarding. The user hasn't completed setup yet.
+${!user?.display_name ? 'Ask for their name.' : !user?.main_focus ? `You know their name is ${user.display_name}. Ask what they most want help with.` : `You know their name (${user.display_name}) and focus (${user.main_focus}). Ask what usually gets in their way.`}
+Use the update_profile tool to save each answer as they share it.
+When you have name, main_focus, and biggest_struggle, give a warm personalized welcome and mark onboarding as done.`;
         }
 
-        // Handle proactive message save (fire-and-forget from client polling)
-        if (mode === 'proactive_save') {
-            if (content && typeof content === 'string') {
-                await saveMessage(sessionId, 'assistant', content);
-            }
-            return new Response(JSON.stringify({ ok: true }), {
-                headers: { 'Content-Type': 'application/json' },
-            });
+        // ── Save user message ─────────────────────────────────
+        if (message && message !== '__MORNING_BRIEFING__' && message !== '__ONBOARDING__') {
+            await saveMessage(sessionId, 'user', message);
         }
 
-        // Build conversation history
-        // For briefing: use cross-session recent messages for richer context
-        // For chat: use current session messages only
-        const history = mode === 'briefing'
-            ? await getRecentMessages(userId, 20)
-            : await getMessages(sessionId, 20);
-        // Fallback to client-provided history when the server-side store is empty
-        // (happens in demo mode on Vercel serverless where global store resets between invocations)
-        let historyToUse = history.length > 0 ? history : (clientHistory || []);
+        // ── Build conversation history ────────────────────────
+        const rawHistory = isBriefing
+            ? await getRecentMessages(userId, 8)
+            : await getMessages(sessionId, 8);
+        let historyToUse = rawHistory.length > 0 ? rawHistory : (clientHistory || []);
 
-        // Session reset: if there's a goodbye/farewell in recent history, only keep messages after it
-        // This prevents the LLM from pattern-matching old "Anytime!" responses when user says "hi" again
-        const goodbyePattern = /\b(bye|goodbye|see you|take care|talk later|i'm off|farewell|anytime|let me know)\b/i;
-        let lastGoodbyeIndex = -1;
-        for (let i = historyToUse.length - 1; i >= 0; i--) {
-            if (goodbyePattern.test(historyToUse[i].content)) {
-                lastGoodbyeIndex = i;
-                break;
-            }
-        }
-        // If there was a goodbye, and user now says "hi"/"hey"/"hello", reset context to messages after goodbye
-        if (lastGoodbyeIndex >= 0 && /^(hi|hey|hello|i'm back|i'm here)[\s.!,?]*$/i.test(message.trim())) {
-            historyToUse = historyToUse.slice(lastGoodbyeIndex + 1);
-        }
+        const lastAssistantMessage = [...historyToUse].reverse().find(m => m.role === 'assistant')?.content || null;
 
-        const conversationHistory = historyToUse.map((msg) => ({ role: msg.role, content: msg.content }));
+        // Convert to LangChain message objects
+        const chatHistory = convertHistory(historyToUse);
 
-        // Handle check-in acceptance — can come from LLM classifier or legacy regex
-        const isCheckInAcceptance =
-            mode === 'check_in_acceptance' ||
-            ((mode === 'chat' || mode === 'general') &&
-                detectCheckInAcceptance(conversationHistory, message));
-        if (isCheckInAcceptance) {
-            const checkInDueAt = new Date(Date.now() + 25 * 60 * 1000).toISOString();
-            await updateSession(sessionId, { check_in_due_at: checkInDueAt });
-            mode = 'check_in_set';
-        }
-
-        // Check for active check-in timer (to prevent premature check-ins)
-        const currentSession = await getOrCreateSession(userId);
-        const hasActiveCheckIn = !!(currentSession.check_in_due_at && new Date(currentSession.check_in_due_at) > new Date());
-
-        // Build system prompt
-        const now = new Date();
-        const userTimezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const promptMode = mode === 'decomposition' ? 'chat' : mode;
-        // Re-fetch user for latest name/focus/struggle (may have been updated during onboarding)
-        const freshUser = (onboardingStep < 3) ? await getUser(userId) : user;
-        const displayName = freshUser?.display_name || userName || 'Friend';
-
+        // ── Build system prompt ───────────────────────────────
         const systemPrompt = buildSystemPrompt({
-            userName: displayName,
-            currentTime: now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: userTimezone }) + ', ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone }),
+            userName: user?.display_name || userName || 'Friend',
+            currentTime,
             timezone: userTimezone,
-            mode: promptMode,
-            memoryItems: memoryItemsForLLM,
+            memoryItems: memoryItemsForContext,
             activeCheckIn: hasActiveCheckIn,
             checkInDueAt: currentSession.check_in_due_at,
-            remindAt,
-            userMessage,
-            mainFocus: freshUser?.main_focus || null,
-            biggestStruggle: freshUser?.biggest_struggle || null,
+            mainFocus: user?.main_focus || null,
+            biggestStruggle: user?.biggest_struggle || null,
+            modeContext,
+            lastAssistantMessage,
         });
 
-        // Create a streaming response
+        // ── Create tools + model ──────────────────────────────
+        const tools = createTools(userId, sessionId, userTimezone, user);
+        const model = createModel(tools);
+
+        // ── Determine effective user message for the agent ────
+        const effectiveMessage = (message === '__MORNING_BRIEFING__' || message === '__ONBOARDING__')
+            ? (modeContext ? 'Please proceed with the task described in the system prompt.' : 'Hello!')
+            : (message || 'Hello!');
+
         const encoder = new TextEncoder();
-        let fullResponse = '';
 
         const stream = new ReadableStream({
             async start(controller) {
                 try {
-                    fullResponse = await streamChatResponse({
-                        systemPrompt,
-                        conversationHistory,
-                        mode,
-                        userName: displayName,
-                        memoryItems: memoryItemsForLLM,
-                        userMessage: message,
-                        remindAt,
-                        onToken: (token) => {
-                            const data = `data: ${JSON.stringify({ token })}\n\n`;
-                            controller.enqueue(encoder.encode(data));
-                        },
-                    });
+                    let fullText;
 
-                    // Send done signal
+                    if (!model) {
+                        // Demo mode
+                        fullText = await streamDemoResponse({
+                            onToken: (token) => {
+                                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
+                            },
+                        });
+                    } else {
+                        // LangChain model with native tool calling
+                        fullText = await streamAgentResponse({
+                            model,
+                            tools,
+                            systemPrompt,
+                            chatHistory,
+                            userMessage: effectiveMessage,
+                            onToken: (token) => {
+                                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
+                            },
+                            onMemoryChanged: async () => {
+                                const freshMemory = await getMemoryItems(userId);
+                                const _norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+                                const _s = new Set();
+                                const freshForContext = freshMemory
+                                    .filter((i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at))
+                                    .filter((i) => { const k = _norm(i.content); if (_s.has(k)) return false; _s.add(k); return true; })
+                                    .slice(0, 15);
+                                return buildSystemPrompt({
+                                    userName: user?.display_name || userName || 'Friend',
+                                    currentTime,
+                                    timezone: userTimezone,
+                                    memoryItems: freshForContext,
+                                    activeCheckIn: hasActiveCheckIn,
+                                    checkInDueAt: currentSession.check_in_due_at,
+                                    mainFocus: user?.main_focus || null,
+                                    biggestStruggle: user?.biggest_struggle || null,
+                                    modeContext,
+                                    lastAssistantMessage,
+                                });
+                            },
+                        });
+                    }
+
                     controller.enqueue(encoder.encode('data: [DONE]\n\n'));
                     controller.close();
 
-                    // Save assistant response to DB (after stream completes)
-                    if (fullResponse) {
-                        await saveMessage(sessionId, 'assistant', fullResponse);
-                        // Cache the briefing so it's not regenerated on refresh
-                        if (mode === 'briefing') {
-                            await saveTodayBriefing(userId, fullResponse);
-                        }
+                    // ── Save assistant response ───────────────
+                    if (fullText) {
+                        await saveMessage(sessionId, 'assistant', fullText);
+                        if (isBriefing) await saveTodayBriefing(userId, fullText);
                     }
                 } catch (error) {
-                    console.error('Streaming error:', error);
-                    const errorMsg = "Something went sideways — want to try again? I'm here. 🔄";
-                    controller.enqueue(
-                        encoder.encode(`data: ${JSON.stringify({ token: errorMsg })}\n\n`)
-                    );
-                    controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                    controller.close();
+                    console.error('[Chat API] Streaming error:', error);
+                    try {
+                        const errMsg = "Something went sideways — want to try again? I'm here.";
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token: errMsg })}\n\n`));
+                        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                        controller.close();
+                    } catch {
+                        // Controller already closed — ignore
+                    }
                 }
             },
         });
 
         return new Response(stream, {
-            headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                Connection: 'keep-alive',
-            },
+            headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' },
         });
+
     } catch (error) {
-        console.error('Chat API error:', error);
-        return new Response(JSON.stringify({ error: error.message, stack: error.stack }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-        });
+        console.error('[Chat API] Error:', error);
+        return Response.json({ error: error.message }, { status: 500 });
     }
 }
-
-
-
-
-
-

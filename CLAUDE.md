@@ -24,7 +24,7 @@
 - Use `/.claude` for Claude Code tooling, agents, hooks, helpers
 - Use `/docs` for documentation and markdown files (if needed)
 
-## FocusFlow Project Architecture
+## Flowy — Guide for AI Assistantsure
 
 ### Tech Stack
 
@@ -72,6 +72,7 @@ FocusFlow's chat API detects 8 intents and routes to different system prompts:
 | `general` | Everything else | Chat | None |
 
 **Classification strategy:**
+
 - **Primary:** Groq `llama-3.1-8b-instant` (zero-temp JSON classifier, 0.7 confidence threshold)
 - **Fallback:** Regex-based detector (when API fails or in demo mode)
 
@@ -104,6 +105,7 @@ FocusFlow's chat API detects 8 intents and routes to different system prompts:
 ### Environment Variables (Required & Optional)
 
 **Required for production:**
+
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://...supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
@@ -111,6 +113,7 @@ GROQ_API_KEY=gsk_...
 ```
 
 **Optional (for Ruflo MCP integration):**
+
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...  # For Ruflo's Claude models
 CLAUDE_FLOW_V3_ENABLED=true   # Enable Ruflo swarm features
@@ -123,6 +126,7 @@ CLAUDE_FLOW_HOOKS_ENABLED=true # Enable lifecycle hooks
 - Use Claude Code's Task tool for spawning agents, not just MCP
 
 **Mandatory patterns:**
+
 - ALWAYS batch ALL todos in ONE TodoWrite call (5-10+ minimum)
 - ALWAYS spawn ALL agents in ONE message with full instructions via Task tool
 - ALWAYS batch ALL file reads/writes/edits in ONE message

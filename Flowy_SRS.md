@@ -1,4 +1,5 @@
 # FocusFlow — Software Requirements Specification
+
 **MVP · Chatbot Interface · Version 1.0 · Confidential · 2026**
 
 ---
@@ -7,11 +8,11 @@
 
 ### 1.1 Purpose
 
-This Software Requirements Specification (SRS) defines the functional, non-functional, and system requirements for the FocusFlow MVP — a web-based AI chatbot interface for adults with ADHD. This document is intended for use by the engineering team to build the system and serves as the contractual baseline for what the MVP must deliver.
+This Software Requirements Specification (SRS) defines the functional, non-functional, and system requirements for the Flowy MVP — a web-based AI chatbot interface for adults with ADHD. This document is intended for use by the engineering team to build the system and serves as the contractual baseline for what the MVP must deliver.
 
 ### 1.2 Scope
 
-The FocusFlow MVP is a single-page web application that hosts a conversational AI agent. The system must support four core interaction flows: morning briefing generation, task decomposition, passive memory capture, and shame-free check-ins. The MVP explicitly excludes proactive push messaging (WhatsApp, SMS, email) and native mobile apps.
+The Flowy MVP is a single-page web application that hosts a conversational AI agent. The system must support four core interaction flows: morning briefing generation, task decomposition, passive memory capture, and shame-free check-ins. The MVP explicitly excludes proactive push messaging (WhatsApp, SMS, email) and native mobile apps.
 
 ### 1.3 Document Conventions
 

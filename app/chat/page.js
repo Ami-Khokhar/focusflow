@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
-import { parseRemindTime } from '@/lib/timeParser';
 
 // Convert a base64url VAPID public key to a Uint8Array for PushManager.subscribe()
 function urlBase64ToUint8Array(base64String) {
@@ -31,10 +30,34 @@ export default function ChatPage() {
     const isLoadingRef = useRef(false); // ref mirror for polling to read
     const briefingDoneRef = useRef(false); // prevents reminders from surfacing before briefing
 
-    const userId =
-        typeof window !== 'undefined'
-            ? localStorage.getItem('focusflow_user_id')
-            : null;
+    const [userId, setUserId] = useState(null);
+
+    useEffect(() => {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+        if (!supabaseUrl || !supabaseKey) {
+            // Demo mode: use localStorage UUID
+            setUserId(localStorage.getItem('focusflow_user_id') || '00000000-0000-0000-0000-000000000001');
+            return;
+        }
+
+        // Middleware already verified auth. Fetch user info from our API (reads httpOnly cookies server-side).
+        fetch('/api/user/me').then(res => {
+            if (!res.ok) {
+                router.push('/');
+                return;
+            }
+            return res.json();
+        }).then(data => {
+            if (!data) return;
+            setUserId(data.id);
+            if (data.display_name && data.display_name !== 'Friend') {
+                setUserName(data.display_name);
+                localStorage.setItem('focusflow_user_name', data.display_name);
+            }
+        }).catch(() => router.push('/'));
+    }, [router]);
 
     // Keep ref in sync with state (so polling can read without stale closures)
     useEffect(() => {
@@ -61,6 +84,7 @@ export default function ChatPage() {
 
     // Initialize session
     useEffect(() => {
+        if (userId === null) return; // Still loading auth — wait
         if (!userId) {
             router.push('/');
             return;
@@ -126,6 +150,35 @@ export default function ChatPage() {
     const deliveredCheckInKeys = useRef(new Set());
 
     // Shared handler — called by both Realtime and polling paths
+    const handleReminderAction = useCallback(async (reminderId, action) => {
+        // Immediately show loading state
+        setMessages((prev) => prev.map((msg) =>
+            msg.reminderId === reminderId ? { ...msg, reminderLoading: action } : msg
+        ));
+        try {
+            const res = await fetch('/api/memory', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ id: reminderId, action, userId }),
+            });
+            if (!res.ok) throw new Error('PATCH failed');
+            // Replace buttons with confirmation text
+            const label = action === 'keep_as_note' ? 'Kept as note' : 'Dismissed';
+            setMessages((prev) => prev.map((msg) => {
+                if (msg.reminderId === reminderId) {
+                    return { role: 'assistant', content: `${msg.baseContent}\n\n*${label}.*` };
+                }
+                return msg;
+            }));
+        } catch {
+            // Revert loading state and show inline error
+            setMessages((prev) => prev.map((msg) =>
+                msg.reminderId === reminderId ? { ...msg, reminderLoading: null } : msg
+            ));
+        }
+    }, [userId]);
+
     const handleDueReminder = useCallback((reminder) => {
         if (deliveredReminderIds.current.has(reminder.id)) return;
         deliveredReminderIds.current.add(reminder.id);
@@ -134,9 +187,14 @@ export default function ChatPage() {
             'ff_delivered_reminders',
             JSON.stringify([...deliveredReminderIds.current])
         );
-        const content = `**Reminder:** ${reminder.content}\n\n_(This was something you asked me to hold onto.)_`;
-        setMessages((prev) => [...prev, { role: 'assistant', content }]);
-        saveProactiveMessage(content);
+        const baseContent = `Hey! You asked me to remind you: **${reminder.content}**`;
+        setMessages((prev) => [...prev, {
+            role: 'assistant',
+            content: baseContent,
+            reminderId: reminder.id,
+            baseContent,
+        }]);
+        saveProactiveMessage(baseContent);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -175,8 +233,8 @@ export default function ChatPage() {
         if (!userId || !sessionId || !isSupabaseMode) return;
 
         let channel;
-        import('@supabase/supabase-js').then(({ createClient }) => {
-            const client = createClient(supabaseUrl, supabaseKey);
+        import('@supabase/ssr').then(({ createBrowserClient }) => {
+            const client = createBrowserClient(supabaseUrl, supabaseKey);
             channel = client
                 .channel(`reminders_${userId}`)
                 .on(
@@ -274,7 +332,7 @@ export default function ChatPage() {
         }
 
         setupPush();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userId, sessionId]);
 
     // Fire-and-forget: save a proactive message to conversation history
@@ -291,7 +349,7 @@ export default function ChatPage() {
                 content,
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             }),
-        }).catch(() => {});
+        }).catch(() => { });
     }
     // Stream a check-in message from the API
     async function triggerCheckIn() {
@@ -313,37 +371,15 @@ export default function ChatPage() {
 
             if (!res.ok) throw new Error('Check-in API error');
 
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let fullText = '';
-
             setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.token) {
-                                fullText += parsed.token;
-                                setMessages((prev) => {
-                                    const updated = [...prev];
-                                    updated[updated.length - 1] = { role: 'assistant', content: fullText };
-                                    return updated;
-                                });
-                            }
-                        } catch {
-                            // Skip malformed
-                        }
-                    }
-                }
-            }
+            const fullText = await readSSEStream(res, (accumulated) => {
+                setMessages((prev) => {
+                    const updated = [...prev];
+                    updated[updated.length - 1] = { role: 'assistant', content: accumulated };
+                    return updated;
+                });
+            });
 
             if (fullText) {
                 saveProactiveMessage(fullText);
@@ -387,50 +423,22 @@ export default function ChatPage() {
 
             if (!res.ok) throw new Error('Chat API error');
 
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let fullText = '';
-
-            // Add empty assistant message
             setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.token) {
-                                fullText += parsed.token;
-                                setMessages((prev) => {
-                                    const updated = [...prev];
-                                    updated[updated.length - 1] = {
-                                        role: 'assistant',
-                                        content: fullText,
-                                    };
-                                    return updated;
-                                });
-                            }
-                        } catch {
-                            // Skip malformed JSON
-                        }
-                    }
-                }
-            }
+            await readSSEStream(res, (accumulated) => {
+                setMessages((prev) => {
+                    const updated = [...prev];
+                    updated[updated.length - 1] = { role: 'assistant', content: accumulated };
+                    return updated;
+                });
+            });
         } catch {
             setMessages((prev) => [
                 ...prev,
                 {
                     role: 'assistant',
                     content:
-                        "👋 Hey there! I'm FocusFlow — your ADHD-friendly companion. I'm here to help you start tasks, remember things, and stay on track. No pressure, no judgment. **What's on your mind today?**",
+                        "👋 Hey there! I'm Flowy — your ADHD-friendly companion. I'm here to help you start tasks, remember things, and stay on track. No pressure, no judgment. **What's on your mind today?**",
                 },
             ]);
         } finally {
@@ -442,16 +450,10 @@ export default function ChatPage() {
     // This fires checkProactiveMessages() at the exact due time instead of waiting
     // for the next 15s poll — critical for reminders < 5 minutes.
     function scheduleLocalReminderCheck(userText) {
-        const stripped = userText
-            .replace(/remind me (to |about )?/i, '')
-            .replace(/remember (this|that)?:?\s*/i, '')
-            .trim();
-        const { remindAt } = parseRemindTime(stripped);
-        if (!remindAt) return;
-        const msUntil = new Date(remindAt) - Date.now();
-        // Only schedule for reminders within the next 30 minutes
-        if (msUntil > 0 && msUntil <= 30 * 60 * 1000) {
-            setTimeout(() => checkProactiveMessages(), msUntil + 2000); // +2s buffer for DB write
+        // If message looks like a near-future reminder, schedule an extra poll in 5 minutes
+        const hasTimeRef = /\b(\d+\s*(min|minute|hour|hr|second|sec)s?|in a (min|moment|sec)|at \d+)/i.test(userText);
+        if (hasTimeRef) {
+            setTimeout(() => checkProactiveMessages(), 5 * 60 * 1000);
         }
     }
 
@@ -489,43 +491,15 @@ export default function ChatPage() {
 
             if (!res.ok) throw new Error('Chat API error');
 
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let fullText = '';
-
-            // Add empty assistant message for streaming
             setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.token) {
-                                fullText += parsed.token;
-                                setMessages((prev) => {
-                                    const updated = [...prev];
-                                    updated[updated.length - 1] = {
-                                        role: 'assistant',
-                                        content: fullText,
-                                    };
-                                    return updated;
-                                });
-                            }
-                        } catch {
-                            // Skip malformed
-                        }
-                    }
-                }
-            }
+            await readSSEStream(res, (accumulated) => {
+                setMessages((prev) => {
+                    const updated = [...prev];
+                    updated[updated.length - 1] = { role: 'assistant', content: accumulated };
+                    return updated;
+                });
+            });
             // After onboarding answers, sync the user name from the server
             if (userName === 'Friend') {
                 try {
@@ -558,76 +532,186 @@ export default function ChatPage() {
         }
     }
 
+    async function readSSEStream(res, onToken) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            for (const line of chunk.split('\n')) {
+                if (!line.startsWith('data: ')) continue;
+                const data = line.slice(6);
+                if (data === '[DONE]') continue;
+                try {
+                    const parsed = JSON.parse(data);
+                    if (parsed.token) {
+                        fullText += parsed.token;
+                        onToken(fullText);
+                    }
+                } catch { /* skip malformed */ }
+            }
+        }
+        return fullText;
+    }
+
     return (
         <div className="chat-container">
-            {/* Header */}
-            <header className="chat-header">
-                <div className="chat-header-left">
-                    <span className="chat-header-logo">🧠</span>
-                    <div>
-                        <h1>FocusFlow</h1>
-                        <div className="chat-header-status">
-                            <span className="status-dot" />
-                            Online
-                        </div>
-                    </div>
+            {/* Sidebar */}
+            <aside className="sidebar">
+                <div className="sidebar-header">
+                    <img src="/logo.png" alt="Flowy Logo" className="sidebar-logo-img" />
+                    <span className="sidebar-title">Flowy</span>
                 </div>
-                {!process.env.NEXT_PUBLIC_SUPABASE_URL && <span className="demo-badge">Demo</span>}
-            </header>
 
-            {/* Messages */}
-            <div className="messages-area">
-                {messages.map((msg, i) => (
-                    <div key={i} className={`message ${msg.role}`}>
-                        {msg.role === 'assistant' ? (
-                            <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        ) : (
-                            <p>{msg.content}</p>
-                        )}
+                <button
+                    className="btn-new-session"
+                    onClick={() => {
+                        localStorage.removeItem('focusflow_session_id');
+                        window.location.reload();
+                    }}
+                >
+                    + New Horizon
+                </button>
+
+                <nav className="sidebar-nav">
+                    <div className="nav-label">Past Sessions</div>
+                    <div className="nav-item active">
+                        <span className="nav-item-title">{messages[0]?.content?.slice(0, 30) || 'Today\'s Focus'}...</span>
+                        <span className="nav-item-meta">Active Now</span>
                     </div>
-                ))}
+                </nav>
 
-                {isLoading && messages[messages.length - 1]?.role !== 'assistant' && (
-                    <div className="typing-indicator">
-                        <div className="typing-dots">
-                            <span />
-                            <span />
-                            <span />
-                        </div>
-                        Thinking...
+                <div className="sidebar-footer">
+                    <div className="user-avatar">
+                        {userName.charAt(0)}
                     </div>
-                )}
-
-                <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="input-area">
-                <div className="input-wrapper">
-                    <textarea
-                        ref={textareaRef}
-                        rows={1}
-                        placeholder="What's on your mind?"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        disabled={isLoading}
-                    />
+                    <div className="user-info">
+                        <div className="user-name">{userName}</div>
+                        <div className="user-status">Present</div>
+                    </div>
                     <button
-                        className="send-btn"
-                        onClick={handleSend}
-                        disabled={!input.trim() || isLoading}
-                        aria-label="Send message"
+                        className="settings-btn"
+                        title="Sign out"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', opacity: 0.5 }}
+                        onClick={async () => {
+                            const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+                            const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+                            if (supabaseUrl && supabaseKey) {
+                                const { createBrowserClient } = await import('@supabase/ssr');
+                                const client = createBrowserClient(supabaseUrl, supabaseKey);
+                                await client.auth.signOut();
+                            }
+                            localStorage.clear();
+                            router.push('/');
+                        }}
                     >
-                        ↑
+                        ↪
                     </button>
                 </div>
-            </div>
+            </aside>
 
-            {/* Footer */}
-            <div style={{ textAlign: 'center', padding: '8px', opacity: 0.5, fontSize: '0.75rem' }}>
-                <a href="/privacy" style={{ color: '#7c83ff', textDecoration: 'none' }}>Privacy Policy</a>
-            </div>
+            {/* Main Content */}
+            <main className="main-content">
+                <header className="chat-header">
+                    <div className="header-meta">Active Reflection</div>
+                    <button
+                        onClick={async () => {
+                            if (!sessionId) return;
+                            await fetch('/api/chat/clear', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ sessionId, userId }),
+                            });
+                            setMessages([]);
+                        }}
+                        style={{ position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', cursor: 'pointer', opacity: 0.4, fontSize: '11px', color: 'inherit' }}
+                        title="Clear chat history"
+                    >
+                        clear
+                    </button>
+                    <div className="header-time" suppressHydrationWarning>
+                        {new Date().toLocaleDateString('en-US', { weekday: 'long' })}, {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                    </div>
+
+                    <div className="header-status-msg">
+                        {briefingDoneRef.current ? "The light is changing." : "Welcome back."}
+                    </div>
+                    <div className="header-status-sub">
+                        {briefingDoneRef.current
+                            ? `It is currently ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}. Take a moment to breathe and notice your progress.`
+                            : "Let's gather your thoughts and find a peaceful rhythm for the day."}
+                    </div>
+                </header>
+
+                <div className="messages-area">
+                    {messages.map((msg, i) => (
+                        <div key={i} className={`message ${msg.role}`}>
+                            {msg.role === 'assistant' ? (
+                                <>
+                                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                    {msg.reminderId && (
+                                        <div className="reminder-actions">
+                                            <button
+                                                className={`reminder-btn reminder-btn-keep${msg.reminderLoading === 'keep_as_note' ? ' reminder-btn-loading' : ''}`}
+                                                onClick={() => handleReminderAction(msg.reminderId, 'keep_as_note')}
+                                                disabled={!!msg.reminderLoading}
+                                            >
+                                                {msg.reminderLoading === 'keep_as_note' ? 'Saving...' : 'Keep as note'}
+                                            </button>
+                                            <button
+                                                className={`reminder-btn reminder-btn-dismiss${msg.reminderLoading === 'dismiss' ? ' reminder-btn-loading' : ''}`}
+                                                onClick={() => handleReminderAction(msg.reminderId, 'dismiss')}
+                                                disabled={!!msg.reminderLoading}
+                                            >
+                                                {msg.reminderLoading === 'dismiss' ? 'Dismissing...' : 'Dismiss'}
+                                            </button>
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                <p>{msg.content}</p>
+                            )}
+                        </div>
+                    ))}
+
+                    {isLoading && messages[messages.length - 1]?.role !== 'assistant' && (
+                        <div className="message assistant" style={{ opacity: 0.7 }}>
+                            <div className="typing-dots">
+                                <span />
+                                <span />
+                                <span />
+                            </div>
+                        </div>
+                    )}
+
+                    <div ref={messagesEndRef} />
+                </div>
+
+                <div className="input-area">
+                    <div className="input-wrapper">
+                        <textarea
+                            ref={textareaRef}
+                            rows={1}
+                            placeholder="Share a thought..."
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            disabled={isLoading}
+                        />
+                        <button
+                            className="send-btn"
+                            onClick={handleSend}
+                            disabled={!input.trim() || isLoading}
+                            aria-label="Send message"
+                        >
+                            ↑
+                        </button>
+                    </div>
+                    <div className="footer-hint">Write Slowly • Breathe Deeply</div>
+                </div>
+            </main>
         </div>
     );
 }

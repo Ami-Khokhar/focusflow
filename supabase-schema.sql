@@ -1,4 +1,4 @@
--- FocusFlow V2 — Supabase Schema
+-- Flowy — Supabase Schema
 -- Run this in your Supabase project → SQL Editor → New query
 
 -- ─── Users ───────────────────────────────────────────────────────────────────

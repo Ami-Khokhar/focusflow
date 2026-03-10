@@ -13,18 +13,24 @@
     "ai-test:matrix": "node focusflow-ai-tests/tests/runTests.js --matrix",
     "ai-test:matrix:quick": "node focusflow-ai-tests/tests/runTests.js --matrix --max-variants 2",
     "ai-test:flex": "node focusflow-ai-tests/tests/runTests.js --flex --shuffle --repeat 2",
-    "ai-test:flex:quick": "node focusflow-ai-tests/tests/runTests.js --flex --max-runs 16 --shuffle"
+    "ai-test:flex:quick": "node focusflow-ai-tests/tests/runTests.js --flex --max-runs 16 --shuffle",
+    "test:evals": "node focusflow-ai-tests/runEvals.js",
+    "test:evals:regression": "node focusflow-ai-tests/runEvals.js --compare-baseline",
+    "test:evals:quick": "node focusflow-ai-tests/runEvals.js --tier=critical",
+    "test:evals:save-baseline": "node focusflow-ai-tests/runEvals.js --save-baseline"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.0",
+    "@langchain/core": "^1.1.31",
+    "@langchain/groq": "^1.1.4",
+    "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.42.0",
-    "groq-sdk": "^0.8.0",
     "next": "^14.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.0",
     "uuid": "^9.0.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "eslint": "^8.0.0",

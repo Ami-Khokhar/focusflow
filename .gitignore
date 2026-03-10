@@ -38,7 +38,18 @@ npm-debug.log*
 .claude/**/*.db
 .claude/**/*.log
 .claude/cache/
+.claude/projects/
+
+# Claude Flow sessions (auto-generated)
+.claude-flow/sessions/
+
 # AI Test Suite
-focusflow-ai-tests/
 focusflow-ai-tests/.env
 focusflow-ai-tests/reports/
+
+# Server logs
+server.log
+
+# Temp files
+temp-test*.js
+temp-test*.mjs

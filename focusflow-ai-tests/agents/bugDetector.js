@@ -6,7 +6,7 @@
 
 import { buildBugDetectorPrompt, buildBugDetectorUserMessage } from '../prompts/bugPrompt.js';
 
-import { getGroqClient } from '../../lib/groqClient.js';
+import { getGroqClient } from '../utils/groqClient.js';
 
 // ─── Rule-based DB checks ─────────────────────────────────────────────────────
 
