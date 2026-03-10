@@ -2,9 +2,10 @@
 // Scans ALL users for due reminders, marks them surfaced, and sends Web Push.
 // Called by Vercel Cron (once/day) + cron-job.org (every 1 min) for always-on delivery.
 import webpush from 'web-push';
-import { getAllDueReminders, markReminderSurfaced, getPushSubscriptionsForUsers, deletePushSubscription } from '@/lib/db';
+import { getAllDueReminders, markReminderSurfaced, getPushSubscriptionsForUsers, deletePushSubscription, getUser } from '@/lib/db';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 // Configure VAPID — required for Web Push
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -62,6 +63,40 @@ export async function GET(request) {
                             await deletePushSubscription(sub.endpoint);
                         }
                     }
+                }
+            }
+        }
+
+        // Send Telegram messages to users with telegram_id
+        if (process.env.TELEGRAM_BOT_TOKEN) {
+            const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+            const sentUsers = new Set();
+            for (const reminder of due) {
+                if (sentUsers.has(reminder.user_id)) continue;
+                try {
+                    const user = await getUser(reminder.user_id);
+                    if (!user?.telegram_id) continue;
+                    sentUsers.add(reminder.user_id);
+
+                    const text = `Hey! You asked me to remind you:\n\n<b>${reminder.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>`;
+                    const keyboard = {
+                        inline_keyboard: [[
+                            { text: 'Keep as note', callback_data: `keep:${reminder.id}` },
+                            { text: 'Dismiss', callback_data: `dismiss:${reminder.id}` },
+                        ]]
+                    };
+                    await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chat_id: user.telegram_id,
+                            text,
+                            parse_mode: 'HTML',
+                            reply_markup: keyboard,
+                        }),
+                    });
+                } catch (err) {
+                    console.error(`[Cron] Telegram send failed for user ${reminder.user_id}:`, err.message);
                 }
             }
         }
