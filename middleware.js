@@ -56,7 +56,7 @@ export async function middleware(request) {
             return NextResponse.redirect(new URL('/', request.url));
         }
         // Block unauthenticated API calls (let route handlers do their own auth check for polling endpoints)
-        if (pathname.startsWith('/api') && !pathname.startsWith('/api/reminders') && pathname !== '/api/ping') {
+        if (pathname.startsWith('/api') && !pathname.startsWith('/api/reminders') && !pathname.startsWith('/api/telegram') && pathname !== '/api/ping') {
             return Response.json({ error: 'Unauthorized' }, { status: 401 });
         }
     }
