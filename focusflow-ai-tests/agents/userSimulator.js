@@ -5,7 +5,7 @@
 import Groq from 'groq-sdk';
 import { buildSimulatorPrompt, buildRandomConversationPrompt } from '../prompts/simulatorPrompt.js';
 
-import { getGroqClient } from '../../lib/groqClient.js';
+import { getGroqClient } from '../utils/groqClient.js';
 
 /**
  * Generate one realistic user message for a given scenario and conversation history.
