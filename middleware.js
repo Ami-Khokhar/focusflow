@@ -4,8 +4,9 @@ import { NextResponse } from 'next/server';
 export async function middleware(request) {
     const { pathname } = request.nextUrl;
 
-    // Always allow auth callback through
-    if (pathname.startsWith('/auth/callback')) {
+    // Always allow auth callback and Telegram webhook through
+    // (Telegram route has its own secret-token verification)
+    if (pathname.startsWith('/auth/callback') || pathname.startsWith('/api/telegram')) {
         return NextResponse.next();
     }
 
