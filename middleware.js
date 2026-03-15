@@ -41,9 +41,12 @@ export async function middleware(request) {
             return response;
         }
 
-        // Allow test mode bypass with TEST_TOKEN
-        if (process.env.TEST_MODE === 'true' && authHeader === `Bearer ${process.env.TEST_TOKEN}`) {
-            console.log('[Middleware] Test mode allowed:', { authHeader, testToken: process.env.TEST_TOKEN });
+        // Allow test mode bypass with TEST_TOKEN (non-production only)
+        if (
+            process.env.NODE_ENV !== 'production' &&
+            process.env.TEST_MODE === 'true' &&
+            authHeader === `Bearer ${process.env.TEST_TOKEN}`
+        ) {
             return response;
         }
 

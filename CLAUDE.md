@@ -50,9 +50,11 @@
 | `app/api/cron/reminders/route.js` | Vercel Cron handler | markReminderSurfaced |
 | `app/chat/page.js` | React UI with SSE streaming | Chat component, Realtime subscription |
 | `lib/db.js` | All database operations | 20+ functions, dual-path (demo/Supabase) |
-| `lib/llm.js` | Groq SDK integration | streamChatResponse, classifyIntentWithLLM |
-| `lib/prompts.js` | System prompts & intent detection | buildSystemPrompt, detectIntent, FORBIDDEN_WORDS |
-| `lib/timeParser.js` | Natural language time parsing | parseRemindTime, parseTimeOffset |
+| `lib/langchain/agent.js` | Groq model setup + key rotation | createModel, createTelegramModel |
+| `lib/langchain/prompts.js` | System prompts & forbidden word filter | buildSystemPrompt, filterForbiddenWords, FORBIDDEN_WORDS |
+| `lib/langchain/tools.js` | LangChain tool definitions | createTools (6 tools) |
+| `lib/langchain/streaming.js` | SSE streaming + tool call loop | streamAgentResponse, streamDemoResponse |
+| `lib/langchain/keys.js` | Groq API key rotation | getGroqApiKey, isDemoMode |
 | `lib/supabase.js` | Supabase client config | isDemoMode flag, client instantiation |
 
 ### Intent Classification (Multi-Mode)

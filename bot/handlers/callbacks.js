@@ -1,7 +1,7 @@
-import { updateMemoryItem } from '../../lib/db.js';
+import { updateMemoryItem, markMemoryItemDone } from '../../lib/db.js';
 
 /**
- * Handle inline keyboard callback queries (reminder keep/dismiss buttons).
+ * Handle inline keyboard callback queries (reminder keep/dismiss, task done).
  */
 export async function handleCallback(ctx) {
     const data = ctx.callbackQuery.data;
@@ -27,6 +27,13 @@ export async function handleCallback(ctx) {
             await ctx.answerCallbackQuery({ text: 'Dismissed!' });
             await ctx.editMessageReplyMarkup({ reply_markup: undefined });
             await ctx.editMessageText(ctx.callbackQuery.message.text + '\n\n✓ Dismissed', { parse_mode: 'HTML' });
+
+        } else if (data.startsWith('done:')) {
+            const itemId = data.slice(5);
+            await markMemoryItemDone(userId, itemId);
+            await ctx.answerCallbackQuery({ text: 'Marked as done!' });
+            await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+            await ctx.editMessageText(ctx.callbackQuery.message.text + '\n\n✓ Done!', { parse_mode: 'HTML' });
 
         } else {
             await ctx.answerCallbackQuery({ text: 'Unknown action.' });

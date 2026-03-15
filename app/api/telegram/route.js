@@ -35,13 +35,14 @@ export async function POST(request) {
         return Response.json({ error: 'TELEGRAM_BOT_TOKEN not set' }, { status: 500 });
     }
 
-    // Optional: verify the request comes from Telegram via secret token
+    // Verify the request comes from Telegram via secret token (fail closed)
     const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET;
-    if (secretToken) {
-        const headerSecret = request.headers.get('x-telegram-bot-api-secret-token');
-        if (headerSecret !== secretToken) {
-            return Response.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+    if (!secretToken) {
+        return Response.json({ error: 'TELEGRAM_WEBHOOK_SECRET not configured' }, { status: 500 });
+    }
+    const headerSecret = request.headers.get('x-telegram-bot-api-secret-token');
+    if (headerSecret !== secretToken) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     try {

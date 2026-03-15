@@ -1,9 +1,9 @@
-// POST /api/chat — streaming chat endpoint (LangChain tool-calling agent)
+// POST /api/chat — streaming chat endpoint (LangGraph state graph)
 import { buildSystemPrompt } from '@/lib/langchain/prompts';
-import { createModel, convertHistory } from '@/lib/langchain/agent';
+import { buildGraph, convertHistory, streamDemoResponse, filterForbiddenWords, store, writeMemory } from '@/lib/langchain/graph';
 import { createTools } from '@/lib/langchain/tools';
-import { streamAgentResponse, streamDemoResponse } from '@/lib/langchain/streaming';
 import { createSupabaseServerClient, supabaseAdmin, isDemoMode } from '@/lib/supabase';
+import { tokenize, overlapRatio } from '@/lib/db';
 import {
     getMessages,
     saveMessage,
@@ -15,8 +15,26 @@ import {
     getRecentMessages,
     getUser,
 } from '@/lib/db';
+import { SystemMessage, HumanMessage } from '@langchain/core/messages';
 
 export const runtime = 'nodejs';
+
+// ── Simple in-memory rate limiter ────────────────────────
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 30; // 30 requests per minute per user
+const MAX_MESSAGE_LENGTH = 5000;
+
+function checkRateLimit(userId) {
+    const now = Date.now();
+    const entry = rateLimitMap.get(userId);
+    if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+        rateLimitMap.set(userId, { windowStart: now, count: 1 });
+        return true;
+    }
+    entry.count++;
+    return entry.count <= RATE_LIMIT_MAX;
+}
 
 export async function POST(request) {
     try {
@@ -25,7 +43,8 @@ export async function POST(request) {
         let userId = body.userId;
 
         // ── Auth ──────────────────────────────────────────────
-        const isTestMode = process.env.TEST_MODE === 'true' &&
+        const isTestMode = process.env.NODE_ENV !== 'production' &&
+            process.env.TEST_MODE === 'true' &&
             request.headers.get('authorization') === `Bearer ${process.env.TEST_TOKEN}`;
 
         if (!isDemoMode && !isTestMode) {
@@ -40,6 +59,16 @@ export async function POST(request) {
 
         if (!sessionId || !userId) return Response.json({ error: 'Missing sessionId or userId' }, { status: 400 });
 
+        // ── Rate limiting ────────────────────────────────────────
+        if (!checkRateLimit(userId)) {
+            return Response.json({ error: 'Too many requests. Please slow down.' }, { status: 429 });
+        }
+
+        // ── Message length cap ───────────────────────────────────
+        if (message && message.length > MAX_MESSAGE_LENGTH) {
+            return Response.json({ error: `Message too long (max ${MAX_MESSAGE_LENGTH} characters)` }, { status: 400 });
+        }
+
         // ── Proactive save (fire-and-forget, no LLM needed) ───
         if (requestMode === 'proactive_save') {
             if (content && typeof content === 'string' && content.length <= 5000) {
@@ -51,6 +80,16 @@ export async function POST(request) {
         // ── Load user + session state ─────────────────────────
         const user = await getUser(userId);
         const currentSession = await getOrCreateSession(userId);
+
+        // Trigger background summarization for new sessions
+        const isNewSession = (Date.now() - new Date(currentSession.started_at).getTime()) < 5000;
+        if (isNewSession && !isDemoMode && store) {
+            import('@/lib/langchain/summarizer')
+                .then(({ summarizePreviousSession }) =>
+                    summarizePreviousSession(userId, store))
+                .catch(e =>
+                    console.warn("[Summarizer] Background summarization failed:", e.message));
+        }
         const userTimezone = timezone || user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
         const now = new Date();
         const currentTime = now.toLocaleDateString('en-US', {
@@ -59,12 +98,16 @@ export async function POST(request) {
 
         const hasActiveCheckIn = !!(currentSession.check_in_due_at && new Date(currentSession.check_in_due_at) > now);
         const memoryItems = await getMemoryItems(userId);
-        // Deduplicate by normalized content (keep most recent) and cap at 15 items
-        const _normKey = (s) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-        const _seen = new Set();
+
+        // Deduplicate by overlap ratio (fixes normKey/Set collision bug)
         const memoryItemsForContext = memoryItems
             .filter((i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at))
-            .filter((i) => { const k = _normKey(i.content); if (_seen.has(k)) return false; _seen.add(k); return true; })
+            .reduce((acc, item) => {
+                const itemTokens = tokenize(item.content);
+                const isDup = acc.some((accepted) => overlapRatio(accepted.content, itemTokens) >= 0.8);
+                if (!isDup) acc.push(item);
+                return acc;
+            }, [])
             .slice(0, 15);
 
         // ── Detect special modes from session state ───────────
@@ -94,17 +137,14 @@ export async function POST(request) {
             }
 
             // Filter to today-relevant items for briefing
-            const todayStr = now.toLocaleDateString('en-CA', { timeZone: userTimezone }); // YYYY-MM-DD
+            const todayStr = now.toLocaleDateString('en-CA', { timeZone: userTimezone });
             const briefingItems = memoryItemsForContext.filter((i) => {
-                // Tasks are always relevant (uncompleted work)
                 if (i.category === 'Task') return true;
-                // Reminders: only if remind_at or surfaced_at is today
                 if (i.category === 'Reminder') {
                     const remindDay = i.remind_at ? new Date(i.remind_at).toLocaleDateString('en-CA', { timeZone: userTimezone }) : null;
                     const surfacedDay = i.surfaced_at ? new Date(i.surfaced_at).toLocaleDateString('en-CA', { timeZone: userTimezone }) : null;
                     return remindDay === todayStr || surfacedDay === todayStr;
                 }
-                // Notes/Ideas/Links: only if created today
                 const capturedDay = i.captured_at ? new Date(i.captured_at).toLocaleDateString('en-CA', { timeZone: userTimezone }) : null;
                 return capturedDay === todayStr;
             }).slice(0, 5);
@@ -149,8 +189,8 @@ When you have name, main_focus, and biggest_struggle, give a warm personalized w
 
         // ── Build conversation history ────────────────────────
         const rawHistory = isBriefing
-            ? await getRecentMessages(userId, 8)
-            : await getMessages(sessionId, 8);
+            ? await getRecentMessages(userId, 20)
+            : await getMessages(sessionId, 20);
         let historyToUse = rawHistory.length > 0 ? rawHistory : (clientHistory || []);
 
         const lastAssistantMessage = [...historyToUse].reverse().find(m => m.role === 'assistant')?.content || null;
@@ -172,9 +212,9 @@ When you have name, main_focus, and biggest_struggle, give a warm personalized w
             lastAssistantMessage,
         });
 
-        // ── Create tools + model ──────────────────────────────
-        const tools = createTools(userId, sessionId, userTimezone, user);
-        const model = createModel(tools);
+        // ── Create tools + graph ────────────────────────────
+        const tools = createTools(userId, sessionId, userTimezone, user, store);
+        const graph = buildGraph(tools);
 
         // ── Determine effective user message for the agent ────
         const effectiveMessage = (message === '__MORNING_BRIEFING__' || message === '__ONBOARDING__')
@@ -186,9 +226,9 @@ When you have name, main_focus, and biggest_struggle, give a warm personalized w
         const stream = new ReadableStream({
             async start(controller) {
                 try {
-                    let fullText;
+                    let fullText = '';
 
-                    if (!model) {
+                    if (!graph) {
                         // Demo mode
                         fullText = await streamDemoResponse({
                             onToken: (token) => {
@@ -196,38 +236,42 @@ When you have name, main_focus, and biggest_struggle, give a warm personalized w
                             },
                         });
                     } else {
-                        // LangChain model with native tool calling
-                        fullText = await streamAgentResponse({
-                            model,
-                            tools,
-                            systemPrompt,
-                            chatHistory,
-                            userMessage: effectiveMessage,
-                            onToken: (token) => {
-                                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
-                            },
-                            onMemoryChanged: async () => {
-                                const freshMemory = await getMemoryItems(userId);
-                                const _norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-                                const _s = new Set();
-                                const freshForContext = freshMemory
-                                    .filter((i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at))
-                                    .filter((i) => { const k = _norm(i.content); if (_s.has(k)) return false; _s.add(k); return true; })
-                                    .slice(0, 15);
-                                return buildSystemPrompt({
-                                    userName: user?.display_name || userName || 'Friend',
-                                    currentTime,
-                                    timezone: userTimezone,
-                                    memoryItems: freshForContext,
-                                    activeCheckIn: hasActiveCheckIn,
-                                    checkInDueAt: currentSession.check_in_due_at,
-                                    mainFocus: user?.main_focus || null,
-                                    biggestStruggle: user?.biggest_struggle || null,
-                                    modeContext,
-                                    lastAssistantMessage,
-                                });
-                            },
-                        });
+                        // LangGraph state graph with native tool calling
+                        const threadId = sessionId;
+                        const inputMessages = [
+                            new SystemMessage(systemPrompt),
+                            ...chatHistory,
+                            new HumanMessage(effectiveMessage),
+                        ];
+
+                        // Stream the graph response
+                        const streamResult = await graph.stream(
+                            { messages: inputMessages },
+                            { configurable: { thread_id: threadId, userId }, streamMode: "messages" }
+                        );
+
+                        for await (const [chunk, metadata] of streamResult) {
+                            // Only stream content from the agent node (not tool calls/results)
+                            if (metadata?.langgraph_node === "agent" && chunk.content) {
+                                const content = typeof chunk.content === "string"
+                                    ? chunk.content
+                                    : chunk.content.map(c => c.text || "").join("");
+                                if (content) {
+                                    // Filter forbidden words on each chunk before sending to user
+                                    const filtered = filterForbiddenWords(content);
+                                    fullText += filtered;
+                                    if (filtered) {
+                                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token: filtered })}\n\n`));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fallback if empty
+                        if (!fullText.trim()) {
+                            fullText = "Hey! I'm here. What's on your mind?";
+                            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token: fullText })}\n\n`));
+                        }
                     }
 
                     controller.enqueue(encoder.encode('data: [DONE]\n\n'));
@@ -237,6 +281,9 @@ When you have name, main_focus, and biggest_struggle, give a warm personalized w
                     if (fullText) {
                         await saveMessage(sessionId, 'assistant', fullText);
                         if (isBriefing) await saveTodayBriefing(userId, fullText);
+                        // Fire-and-forget: extract facts from exchange and write to Store
+                        writeMemory(effectiveMessage, fullText, userId, store)
+                            .catch(e => console.warn("[WriteMemory] Background extraction failed:", e.message));
                     }
                 } catch (error) {
                     console.error('[Chat API] Streaming error:', error);

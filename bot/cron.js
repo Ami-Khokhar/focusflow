@@ -8,12 +8,14 @@ import {
     getUser,
     getMemoryItems,
 } from '../lib/db.js';
-import { buildSystemPrompt } from '../lib/langchain/prompts.js';
-import { createModel, convertHistory } from '../lib/langchain/agent.js';
+import { buildSystemPrompt, filterForbiddenWords } from '../lib/langchain/prompts.js';
+import { buildGraph, convertHistory, store } from '../lib/langchain/graph.js';
 import { createTools } from '../lib/langchain/tools.js';
-import { streamAgentResponse } from '../lib/langchain/streaming.js';
-import { toTelegramHTML } from './utils/format.js';
+import { SystemMessage, HumanMessage } from '@langchain/core/messages';
+import { escapeHTML, toTelegramHTML } from './utils/format.js';
 import { splitMessage } from './utils/message.js';
+import { withTimeout } from './utils/timeout.js';
+import { safeSendMessage } from './utils/safeReply.js';
 
 export function startCronJobs(bot) {
     // Every 60 seconds: scan for due reminders
@@ -41,10 +43,11 @@ async function processReminders(bot) {
                     .text('Keep as note', `keep:${item.id}`)
                     .text('Dismiss', `dismiss:${item.id}`);
 
-                await bot.api.sendMessage(
+                await safeSendMessage(
+                    bot.api,
                     user.telegram_id,
                     `Hey! You asked me to remind you:\n\n<b>${escapeHTML(item.content)}</b>`,
-                    { parse_mode: 'HTML', reply_markup: keyboard }
+                    { reply_markup: keyboard }
                 );
             } catch (err) {
                 console.error(`[Cron] Failed to deliver reminder ${item.id}:`, err.message);
@@ -93,34 +96,45 @@ async function processCheckIns(bot) {
                     modeContext,
                 });
 
-                const tools = createTools(user.id, session.id, userTimezone, user);
-                const model = createModel(tools);
+                const tools = createTools(user.id, session.id, userTimezone, user, store);
+                const graph = buildGraph(tools);
 
                 let checkInText;
-                if (!model) {
+                if (!graph) {
                     checkInText = "Hey! It's been about 25 minutes. How's it going? Want to keep going, take a break, or try something different?";
                 } else {
-                    checkInText = await streamAgentResponse({
-                        model, tools, systemPrompt, chatHistory: [],
-                        userMessage: 'Please proceed with the task described in the system prompt.',
-                        onToken: () => {},
-                    });
+                    const inputMessages = [
+                        new SystemMessage(systemPrompt),
+                        new HumanMessage('Please proceed with the task described in the system prompt.'),
+                    ];
+                    const result = await withTimeout(
+                        graph.invoke(
+                            { messages: inputMessages },
+                            { configurable: { thread_id: session.id, userId: user.id } }
+                        ),
+                        25000
+                    );
+                    const lastMsg = result.messages[result.messages.length - 1];
+                    checkInText = filterForbiddenWords(
+                        typeof lastMsg.content === "string" ? lastMsg.content : lastMsg.content?.map(c => c.text || "").join("") || ""
+                    );
+                    if (!checkInText.trim()) checkInText = "Hey! It's been about 25 minutes. How's it going?";
                 }
 
                 const html = toTelegramHTML(checkInText);
                 const parts = splitMessage(html);
                 for (const part of parts) {
-                    await bot.api.sendMessage(user.telegram_id, part, { parse_mode: 'HTML' });
+                    await safeSendMessage(bot.api, user.telegram_id, part);
                 }
             } catch (err) {
-                console.error(`[Cron] Failed to deliver check-in for session ${session.id}:`, err.message);
+                if (err.message === 'TIMEOUT') {
+                    console.error(`[Cron] Check-in timed out for session ${session.id}`);
+                } else {
+                    console.error(`[Cron] Failed to deliver check-in for session ${session.id}:`, err.message);
+                }
             }
         }
     } catch (err) {
         console.error('[Cron] processCheckIns error:', err.message);
     }
-}
-
-function escapeHTML(text) {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

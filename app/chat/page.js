@@ -536,14 +536,31 @@ export default function ChatPage() {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let fullText = '';
+        let buffer = '';
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            const chunk = decoder.decode(value);
-            for (const line of chunk.split('\n')) {
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            // Keep the last element — it may be an incomplete line
+            buffer = lines.pop();
+            for (const line of lines) {
                 if (!line.startsWith('data: ')) continue;
                 const data = line.slice(6);
                 if (data === '[DONE]') continue;
+                try {
+                    const parsed = JSON.parse(data);
+                    if (parsed.token) {
+                        fullText += parsed.token;
+                        onToken(fullText);
+                    }
+                } catch { /* skip malformed */ }
+            }
+        }
+        // Flush remaining buffer
+        if (buffer && buffer.startsWith('data: ')) {
+            const data = buffer.slice(6);
+            if (data !== '[DONE]') {
                 try {
                     const parsed = JSON.parse(data);
                     if (parsed.token) {

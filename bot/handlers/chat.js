@@ -1,7 +1,8 @@
-import { buildSystemPrompt } from '../../lib/langchain/prompts.js';
-import { createModel, convertHistory } from '../../lib/langchain/agent.js';
+import { buildSystemPrompt, filterForbiddenWords } from '../../lib/langchain/prompts.js';
+import { buildGraph, convertHistory, streamDemoResponse, store, writeMemory } from '../../lib/langchain/graph.js';
 import { createTools } from '../../lib/langchain/tools.js';
-import { streamAgentResponse, streamDemoResponse } from '../../lib/langchain/streaming.js';
+import { tokenize, overlapRatio } from '../../lib/db.js';
+import { SystemMessage, HumanMessage } from '@langchain/core/messages';
 import {
     saveMessage,
     getMessages,
@@ -13,6 +14,8 @@ import {
 } from '../../lib/db.js';
 import { toTelegramHTML } from '../utils/format.js';
 import { splitMessage } from '../utils/message.js';
+import { withTimeout } from '../utils/timeout.js';
+import { safeReplyParts } from '../utils/safeReply.js';
 
 /**
  * Handle an incoming text message — replicates app/api/chat/route.js logic
@@ -31,10 +34,20 @@ export async function handleMessage(ctx) {
     const userId = user.id;
     const userTimezone = user.timezone || 'UTC';
 
-    // Typing indicator
+    // Typing indicator — refresh every 4s so user sees the bot is working
     await ctx.replyWithChatAction('typing');
+    const typingInterval = setInterval(() => {
+        ctx.replyWithChatAction('typing').catch(() => {});
+    }, 4000);
 
     try {
+        // Auto-deliver briefing if not yet delivered today
+        const isOnboarding = (user.onboarding_step ?? 3) < 3;
+        if (!session.briefing_delivered && !isOnboarding) {
+            try { await sendBriefing(ctx); }
+            catch (err) { console.error('[Auto-briefing]', err.message); }
+        }
+
         const now = new Date();
         const currentTime = now.toLocaleDateString('en-US', {
             weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: userTimezone
@@ -44,28 +57,23 @@ export async function handleMessage(ctx) {
 
         // Load and deduplicate memory items
         const memoryItems = await getMemoryItems(userId);
-        const _normKey = (s) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-        const _seen = new Set();
         const memoryItemsForContext = memoryItems
             .filter((i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at))
-            .filter((i) => { const k = _normKey(i.content); if (_seen.has(k)) return false; _seen.add(k); return true; })
+            .reduce((acc, item) => {
+                const itemTokens = tokenize(item.content);
+                const isDup = acc.some((accepted) => overlapRatio(accepted.content, itemTokens) >= 0.8);
+                if (!isDup) acc.push(item);
+                return acc;
+            }, [])
             .slice(0, 15);
 
         // Detect special modes
         let modeContext = '';
-        const isOnboarding = (user.onboarding_step ?? 3) < 3;
-
         if (isOnboarding) {
             modeContext = `TASK: You are continuing onboarding. The user hasn't completed setup yet.
 ${!user.display_name ? 'Ask for their name.' : !user.main_focus ? `You know their name is ${user.display_name}. Ask what they most want help with.` : `You know their name (${user.display_name}) and focus (${user.main_focus}). Ask what usually gets in their way.`}
 Use the update_profile tool to save each answer as they share it.
 When you have name, main_focus, and biggest_struggle, give a warm personalized welcome and mark onboarding as done.`;
-        }
-
-        // Auto-deliver briefing if not yet delivered today
-        if (!session.briefing_delivered && !isOnboarding) {
-            // Check for briefing need — will be handled separately if ctx.needsBriefing was set
-            // For now, regular messages proceed normally
         }
 
         // Save user message
@@ -90,71 +98,65 @@ When you have name, main_focus, and biggest_struggle, give a warm personalized w
             lastAssistantMessage,
         });
 
-        // Create tools + model
-        const tools = createTools(userId, sessionId, userTimezone, user);
-        const model = createModel(tools);
+        // Create tools + graph
+        const tools = createTools(userId, sessionId, userTimezone, user, store);
+        const graph = buildGraph(tools);
 
         let fullText;
 
-        if (!model) {
+        if (!graph) {
             // Demo mode
             fullText = await streamDemoResponse({ onToken: () => {} });
         } else {
-            fullText = await streamAgentResponse({
-                model,
-                tools,
-                systemPrompt,
-                chatHistory,
-                userMessage: message,
-                onToken: () => {},
-                onMemoryChanged: async () => {
-                    const freshMemory = await getMemoryItems(userId);
-                    const _norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-                    const _s = new Set();
-                    const freshForContext = freshMemory
-                        .filter((i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at))
-                        .filter((i) => { const k = _norm(i.content); if (_s.has(k)) return false; _s.add(k); return true; })
-                        .slice(0, 15);
-                    return buildSystemPrompt({
-                        userName: user.display_name || 'Friend',
-                        currentTime,
-                        timezone: userTimezone,
-                        memoryItems: freshForContext,
-                        activeCheckIn: hasActiveCheckIn,
-                        checkInDueAt: session.check_in_due_at,
-                        mainFocus: user.main_focus || null,
-                        biggestStruggle: user.biggest_struggle || null,
-                        modeContext,
-                        lastAssistantMessage,
-                    });
-                },
-            });
+            const inputMessages = [
+                new SystemMessage(systemPrompt),
+                ...chatHistory,
+                new HumanMessage(message),
+            ];
+            const result = await withTimeout(
+                graph.invoke(
+                    { messages: inputMessages },
+                    { configurable: { thread_id: sessionId, userId } }
+                ),
+                25000
+            );
+            const lastMsg = result.messages[result.messages.length - 1];
+            fullText = filterForbiddenWords(
+                typeof lastMsg.content === "string" ? lastMsg.content : lastMsg.content?.map(c => c.text || "").join("") || ""
+            );
+            if (!fullText.trim()) fullText = "Hey! I'm here. What's on your mind?";
         }
 
         // Save assistant message
         if (fullText) {
             await saveMessage(sessionId, 'assistant', fullText);
+            // Fire-and-forget: extract facts from exchange and write to Store
+            writeMemory(message, fullText, userId, store)
+                .catch(e => console.warn("[WriteMemory] Background extraction failed:", e.message));
         }
 
         // Format and send
         const html = toTelegramHTML(fullText || "Hey! I'm here. What's on your mind?");
         const parts = splitMessage(html);
-        for (const part of parts) {
-            await ctx.reply(part, { parse_mode: 'HTML' });
-        }
+        await safeReplyParts(ctx, parts);
 
     } catch (err) {
+        if (err.message === 'TIMEOUT') {
+            await ctx.reply("I'm taking too long — try again?");
+            return;
+        }
+
         console.error('[Chat Handler] Error:', err.message);
 
         // Rate limit retry
         if (err.status === 429 || err.message?.includes('rate')) {
             await ctx.reply("Give me a moment...");
-            await new Promise(r => setTimeout(r, 3000));
-            // Don't retry automatically — let user resend
             return;
         }
 
         await ctx.reply("Something went sideways — want to try again? I'm here.");
+    } finally {
+        clearInterval(typingInterval);
     }
 }
 
@@ -176,9 +178,7 @@ export async function sendBriefing(ctx) {
         await updateSession(sessionId, { briefing_delivered: true });
         const html = toTelegramHTML(cached.content);
         const parts = splitMessage(html);
-        for (const part of parts) {
-            await ctx.reply(part, { parse_mode: 'HTML' });
-        }
+        await safeReplyParts(ctx, parts);
         return;
     }
 
@@ -188,11 +188,14 @@ export async function sendBriefing(ctx) {
     }) + ', ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: userTimezone });
 
     const memoryItems = await getMemoryItems(userId);
-    const _normKey = (s) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-    const _seen = new Set();
     const memoryItemsForContext = memoryItems
         .filter((i) => !(i.category === 'Reminder' && i.remind_at && !i.surfaced_at))
-        .filter((i) => { const k = _normKey(i.content); if (_seen.has(k)) return false; _seen.add(k); return true; })
+        .reduce((acc, item) => {
+            const itemTokens = tokenize(item.content);
+            const isDup = acc.some((accepted) => overlapRatio(accepted.content, itemTokens) >= 0.8);
+            if (!isDup) acc.push(item);
+            return acc;
+        }, [])
         .slice(0, 15);
 
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: userTimezone });
@@ -229,21 +232,31 @@ Keep it brief and energizing.`;
         modeContext,
     });
 
-    const tools = createTools(userId, sessionId, userTimezone, user);
-    const model = createModel(tools);
+    const tools = createTools(userId, sessionId, userTimezone, user, store);
+    const graph = buildGraph(tools);
 
     let fullText;
-    if (!model) {
+    if (!graph) {
         fullText = "Good morning! Here's your daily check-in. What's the most important thing on your plate today?";
     } else {
-        const { convertHistory: ch } = await import('../../lib/langchain/agent.js');
-        const recentMsgs = await getRecentMessages(userId, 8);
-        const chatHistory = ch(recentMsgs);
-        fullText = await streamAgentResponse({
-            model, tools, systemPrompt, chatHistory,
-            userMessage: 'Please proceed with the task described in the system prompt.',
-            onToken: () => {},
-        });
+        const recentMsgs = await getRecentMessages(userId, 20);
+        const chatHistory = convertHistory(recentMsgs);
+        const inputMessages = [
+            new SystemMessage(systemPrompt),
+            ...chatHistory,
+            new HumanMessage('Please proceed with the task described in the system prompt.'),
+        ];
+        const result = await withTimeout(
+            graph.invoke(
+                { messages: inputMessages },
+                { configurable: { thread_id: sessionId, userId } }
+            ),
+            25000
+        );
+        const lastMsg = result.messages[result.messages.length - 1];
+        fullText = filterForbiddenWords(
+            typeof lastMsg.content === "string" ? lastMsg.content : lastMsg.content?.map(c => c.text || "").join("") || ""
+        );
     }
 
     await updateSession(sessionId, { briefing_delivered: true });
@@ -251,7 +264,5 @@ Keep it brief and energizing.`;
 
     const html = toTelegramHTML(fullText || "Good morning! What's on your mind today?");
     const parts = splitMessage(html);
-    for (const part of parts) {
-        await ctx.reply(part, { parse_mode: 'HTML' });
-    }
+    await safeReplyParts(ctx, parts);
 }

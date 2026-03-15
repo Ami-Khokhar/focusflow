@@ -14,6 +14,13 @@ export async function POST(request) {
             const { data: appUser } = await supabaseAdmin
                 .from('users').select('id').eq('auth_user_id', user.id).maybeSingle();
             if (!appUser || appUser.id !== userId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+            // Verify session belongs to this user
+            const { data: session } = await supabaseAdmin
+                .from('sessions').select('user_id').eq('id', sessionId).maybeSingle();
+            if (!session || session.user_id !== appUser.id) {
+                return Response.json({ error: 'Session not found' }, { status: 404 });
+            }
         }
 
         if (!sessionId) return Response.json({ error: 'Missing sessionId' }, { status: 400 });

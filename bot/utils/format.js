@@ -1,4 +1,11 @@
 /**
+ * Escape the three characters that break Telegram HTML parse_mode.
+ */
+export function escapeHTML(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
  * Convert markdown to Telegram-safe HTML.
  * Uses HTML parse_mode to avoid MarkdownV2 escaping nightmares.
  */

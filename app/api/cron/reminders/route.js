@@ -17,12 +17,13 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 }
 
 export async function GET(request) {
-    // Verify the request is coming from Vercel Cron or cron-job.org
+    // Verify the request is coming from Vercel Cron or cron-job.org (fail closed)
     const authHeader = request.headers.get('authorization');
-    if (
-        process.env.CRON_SECRET &&
-        authHeader !== `Bearer ${process.env.CRON_SECRET}`
-    ) {
+    if (!process.env.CRON_SECRET) {
+        console.error('[cron] CRON_SECRET not configured — rejecting request');
+        return new Response('CRON_SECRET not configured', { status: 500 });
+    }
+    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
         console.error('[cron] Auth failed — expected Bearer <CRON_SECRET>');
         return new Response('Unauthorized', { status: 401 });
     }

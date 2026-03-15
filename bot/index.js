@@ -18,6 +18,8 @@ await bot.api.setMyCommands([
     { command: 'start', description: 'Start Flowy' },
     { command: 'briefing', description: 'Daily briefing' },
     { command: 'memory', description: 'View saved items' },
+    { command: 'done', description: 'Mark a task as done' },
+    { command: 'focus', description: 'Start a 25-minute focus session' },
     { command: 'help', description: 'Show help' },
     { command: 'clear', description: 'Clear chat history' },
     { command: 'timezone', description: 'Set your timezone' },
